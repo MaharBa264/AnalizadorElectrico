@@ -3,17 +3,31 @@ from flask import Flask
 from .extensions import login_manager
 
 def create_app(config_object=None):
+    # Cargar .env temprano (compat. python-dotenv 0.19.x)
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()  # lee ./.env y también instance/.env si existe
+    except Exception:
+        pass
+
     app = Flask(__name__, instance_relative_config=True)
     app.config.from_object(config_object or "config.DevelopmentConfig")
 
-    # Asegura carpeta instance
+    # Asegura carpetas
     os.makedirs(app.instance_path, exist_ok=True)
+
+    # === Logging unificado (a storage/logs/app.log) ===
+    try:
+        from .utils.logging import setup_logging
+        setup_logging(app)
+    except Exception as e:
+        app.logger.warning("No se pudo inicializar logging: %s", e)
 
     # Extensiones
     login_manager.init_app(app)
     login_manager.login_view = "auth.login"
 
-    # Blueprints
+    # Blueprints (igual que antes)
     from .blueprints.main import bp as main_bp
     app.register_blueprint(main_bp)
 

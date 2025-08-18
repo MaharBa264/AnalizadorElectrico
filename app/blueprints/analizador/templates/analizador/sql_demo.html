@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Demo SQL{% endblock %}
+{% block content %}
+<div class="card shadow-sm">
+  <div class="card-body">
+    <h3 class="h6">Resultado de la demo SQL</h3>
+    {% if ok %}
+      {% if rows %}
+        <div class="table-responsive">
+          <table class="table table-sm table-striped">
+            <thead>
+              <tr>
+                {% for k in rows[0].keys() %}<th>{{ k }}</th>{% endfor %}
+              </tr>
+            </thead>
+            <tbody>
+              {% for r in rows %}
+              <tr>
+                {% for v in r.values() %}<td>{{ v }}</td>{% endfor %}
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <div class="alert alert-info mb-0">No se devolvieron filas.</div>
+      {% endif %}
+    {% else %}
+      <div class="alert alert-danger mb-0">
+        Error consultando SQL: {{ rows[0].error if rows and rows[0].error else 'Desconocido' }}
+      </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
