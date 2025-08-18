@@ -23,6 +23,14 @@ def create_app(config_object=None):
     except Exception as e:
         app.logger.warning("No se pudo inicializar logging: %s", e)
 
+        # Crear carpetas storage/*
+    try:
+        from .services.files import ensure_dirs
+        ensure_dirs()
+    except Exception as e:
+        app.logger.warning("No se pudieron crear carpetas de storage: %s", e)
+
+
     # Extensiones
     login_manager.init_app(app)
     login_manager.login_view = "auth.login"

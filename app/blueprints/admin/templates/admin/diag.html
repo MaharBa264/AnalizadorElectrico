@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Diagnóstico{% endblock %}
+{% block content %}
+<div class="row g-3">
+  <div class="col-md-6">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h3 class="h6 mb-3">SQL Server</h3>
+        {% set it = results.get('sql', {}) %}
+        {% if it.ok %}
+          <div class="alert alert-success mb-0">{{ it.msg }}</div>
+        {% else %}
+          <div class="alert alert-danger mb-0">{{ it.msg }}</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h3 class="h6 mb-3">InfluxDB</h3>
+        {% set it = results.get('influx', {}) %}
+        {% if it.ok %}
+          <div class="alert alert-success mb-0">{{ it.msg }}</div>
+        {% else %}
+          <div class="alert alert-danger mb-0">{{ it.msg }}</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

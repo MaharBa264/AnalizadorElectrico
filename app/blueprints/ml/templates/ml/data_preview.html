@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Vista previa de datos{% endblock %}
+{% block content %}
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <h3 class="h6 mb-2">Serie: {{ equip_grp }} / {{ equipment }} / {{ signal_id }}</h3>
+    <ul class="mb-0">
+      <li>Rango: {{ stats.range }}</li>
+      <li>Registros crudos: {{ stats.raw_count }}</li>
+      <li>Tras limpiar BAD/OLD: {{ stats.cleaned_count }}</li>
+      <li>Resample 1h: {{ stats.hourly_count }}</li>
+      <li>Tras merge clima: {{ stats.merged_count }}</li>
+    </ul>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <h3 class="h6 mb-3">Primeras 50 filas</h3>
+    {% if rows %}
+      <div class="table-responsive">
+        <table class="table table-sm table-striped">
+          <thead>
+            <tr>
+              {% for k in rows[0].keys() %}<th>{{ k }}</th>{% endfor %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in rows %}
+              <tr>
+                {% for v in r.values() %}<td>{{ v }}</td>{% endfor %}
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="alert alert-info mb-0">Sin filas en el rango dado.</div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

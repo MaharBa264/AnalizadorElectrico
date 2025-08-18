@@ -1,17 +1,45 @@
 {% extends "base.html" %}
 {% block title %}ML{% endblock %}
 {% block content %}
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <h3 class="h6 mb-3">Datos para entrenamiento</h3>
+    <form class="row g-3" method="GET" action="{{ url_for('ml.data_preview') }}">
+      <div class="col-sm-2">
+        <label class="form-label">equip_grp</label>
+        <input type="text" name="equip_grp" class="form-control" value="{{ def_equip_grp }}">
+      </div>
+      <div class="col-sm-3">
+        <label class="form-label">equipment</label>
+        <input type="text" name="equipment" class="form-control" value="{{ def_equipment }}">
+      </div>
+      <div class="col-sm-2">
+        <label class="form-label">signal_id</label>
+        <input type="text" name="signal_id" class="form-control" value="{{ def_signal_id }}">
+      </div>
+      <div class="col-sm-2">
+        <label class="form-label">desde</label>
+        <input type="text" name="start" class="form-control" value="{{ def_start }}" placeholder="YYYY-MM-DD o YYYY-MM-DD HH:MM">
+      </div>
+      <div class="col-sm-2">
+        <label class="form-label">hasta</label>
+        <input type="text" name="end" class="form-control" value="{{ def_end }}" placeholder="YYYY-MM-DD o YYYY-MM-DD HH:MM">
+      </div>
+      <div class="col-sm-1 d-flex align-items-end">
+        <button class="btn btn-primary w-100">Probar</button>
+      </div>
+    </form>
+  </div>
+</div>
+
 <div class="card shadow-sm">
   <div class="card-body">
-    <h3 class="h6 mb-2">Pipeline LSTM (stubs)</h3>
+    <h3 class="h6 mb-2">Entrenamiento (stub)</h3>
     <p class="text-muted">
-      Ya están los módulos <code>data/features/model/train/forecast</code>. Falta conectar tus datos reales y TensorFlow.
+      Una vez confirmada la lectura de datos y el merge con clima, activamos el entrenamiento real (TF/Keras).
     </p>
-    <form method="POST" action="{{ url_for('ml.train') }}" class="d-inline">
-      <button class="btn btn-primary btn-sm">Entrenar (stub)</button>
-    </form>
-    <form method="POST" action="{{ url_for('ml.forecast') }}" class="d-inline ms-2">
-      <button class="btn btn-outline-secondary btn-sm">Forecast (stub)</button>
+    <form method="POST" action="{{ url_for('ml.train') }}">
+      <button class="btn btn-outline-secondary btn-sm">Entrenar (placeholder)</button>
     </form>
   </div>
 </div>
