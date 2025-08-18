@@ -6,3 +6,4 @@ storage/
 *.log
 *.pkl
 *.h5
+env/
