@@ -1,0 +1,38 @@
+import os
+from flask import Flask
+from .extensions import login_manager
+
+def create_app(config_object=None):
+    app = Flask(__name__, instance_relative_config=True)
+    app.config.from_object(config_object or "config.DevelopmentConfig")
+
+    # Asegura carpeta instance
+    os.makedirs(app.instance_path, exist_ok=True)
+
+    # Extensiones
+    login_manager.init_app(app)
+    login_manager.login_view = "auth.login"
+
+    # Blueprints
+    from .blueprints.main import bp as main_bp
+    app.register_blueprint(main_bp)
+
+    from .blueprints.auth import bp as auth_bp
+    app.register_blueprint(auth_bp)
+
+    from .blueprints.analizador import bp as analizador_bp
+    app.register_blueprint(analizador_bp, url_prefix="/analizador")
+
+    from .blueprints.asistente import bp as asistente_bp
+    app.register_blueprint(asistente_bp)
+
+    from .blueprints.admin import bp as admin_bp
+    app.register_blueprint(admin_bp, url_prefix="/admin")
+
+    from .blueprints.ml import bp as ml_bp
+    app.register_blueprint(ml_bp, url_prefix="/ml")
+
+    from .blueprints.geo import bp as geo_bp
+    app.register_blueprint(geo_bp, url_prefix="/geo")
+
+    return app

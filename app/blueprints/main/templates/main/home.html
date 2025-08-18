@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Inicio{% endblock %}
+{% block content %}
+<div class="row g-4">
+  <div class="col-md-6">
+    <a class="text-decoration-none" href="{{ url_for('analizador.index') }}">
+      <div class="card h-100 shadow-sm">
+        <div class="card-body">
+          <h3 class="h5 mb-2">🔎 Analizador de analógicas</h3>
+          <p class="text-muted mb-0">Consultar señales y analizar resultados.</p>
+        </div>
+      </div>
+    </a>
+  </div>
+  <div class="col-md-6">
+    <a class="text-decoration-none" href="{{ url_for('asistente.index') }}">
+      <div class="card h-100 shadow-sm">
+        <div class="card-body">
+          <h3 class="h5 mb-2">💬 Asistente</h3>
+          <p class="text-muted mb-0">Chat interno de ayuda (placeholder).</p>
+        </div>
+      </div>
+    </a>
+  </div>
+</div>
+{% endblock %}

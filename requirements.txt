@@ -1,0 +1,10 @@
+# Compatibles con Python 3.6.x
+Flask==2.0.3
+Werkzeug==2.0.3
+Jinja2==3.0.3
+MarkupSafe==2.0.1     # ¡OJO! 2.1+ rompe en Py3.6
+itsdangerous==2.0.1
+Click==8.0.4
+
+Flask-Login==0.5.0
+python-dotenv==0.19.2  # 0.20+ puede pedir Py>=3.7
