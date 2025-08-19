@@ -2,13 +2,13 @@ import json
 import os
 import pandas as pd
 from datetime import datetime, timedelta
-from io import BytesIO
 from flask import render_template, request, redirect, url_for, flash, send_file
 from flask_login import login_required
 from app.services.weather import forecast_hourly
 from . import bp
 from .services import get_signal_hierarchy, get_coords_para_equipo, fetch_sql_series, fetch_weather_history, make_trend_payload, fetch_weather_history_influx
 from .compare import comparar_corriente_vs_temp, graficar_corriente_vs_temp
+from io import StringIO, BytesIO
 
 def _parse_dt(s, default=None):
     if not s:
@@ -73,7 +73,10 @@ def analizar_sql():
             min_time=min_time, max_time=max_time,
             avg_value=avg_value, total_muestras=total_muestras,
             equip_grp=equip_grp, equipment=equipment, signal_id=signal_id,
-            time_data=time_data
+            time_data=time_data,
+            fecha_ini=fecha_ini.strftime("%Y-%m-%d %H:%M"),
+            fecha_fin=fecha_fin.strftime("%Y-%m-%d %H:%M"),
+            comparar_chk=comparar_chk,
         )
 
     # 2) Comparación con clima (histórico: Influx; pronóstico: WeatherAPI)
@@ -89,7 +92,10 @@ def analizar_sql():
             min_time=min_time, max_time=max_time,
             avg_value=avg_value, total_muestras=total_muestras,
             equip_grp=equip_grp, equipment=equipment, signal_id=signal_id,
-            time_data=time_data
+            time_data=time_data,
+            fecha_ini=fecha_ini.strftime("%Y-%m-%d %H:%M"),
+            fecha_fin=fecha_fin.strftime("%Y-%m-%d %H:%M"),
+            comparar_chk=comparar_chk,
         )
     else:
         station_info = {"latitud": lat, "longitud": lon}
@@ -209,6 +215,9 @@ def analizar_sql():
         forecast_debug=forecast_debug, # <-- NUEVO
         hist_source=hist_source,       # <-- NUEVO
         station_info=station_info,
+        fecha_ini = fecha_ini.strftime("%Y-%m-%dT%H:%M:%S"),
+        fecha_fin = fecha_fin.strftime("%Y-%m-%dT%H:%M:%S"),
+        comparar_chk=comparar_chk,
     )
 
 
@@ -227,9 +236,16 @@ def exportar_xlsx():
         if not s:
             return default
         s = s.strip()
-        fmt = "%Y-%m-%dT%H:%M" if "T" in s else ("%Y-%m-%d %H:%M" if " " in s else "%Y-%m-%d")
-        return datetime.strptime(s, fmt)
-
+        for fmt in ("%Y-%m-%dT%H:%M:%S",
+                    "%Y-%m-%d %H:%M:%S",
+                    "%Y-%m-%dT%H:%M",
+                    "%Y-%m-%d %H:%M",
+                    "%Y-%m-%d"):
+            try:
+                return datetime.strptime(s, fmt)
+            except ValueError:
+                continue
+        return default
     fecha_ini = _parse_dt(request.form.get("fecha_ini"), datetime.now()-timedelta(days=7))
     fecha_fin = _parse_dt(request.form.get("fecha_fin"), datetime.now())
 
@@ -275,3 +291,71 @@ def exportar_xlsx():
         download_name=filename,
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
+
+@bp.route("/exportar_csv", methods=["POST"])
+@login_required
+def exportar_csv():
+    equip_grp = request.form.get("equip_grp","").strip()
+    equipment = request.form.get("equipment","").strip()
+    signal_id = request.form.get("signal_id","").strip()
+    comparar_chk = (request.form.get("comparar_con_clima") == "1" or request.form.get("analizar_sql_vs_temp") == "1")
+
+    def _parse_dt(s, default):
+        if not s:
+            return default
+        s = s.strip()
+        for fmt in ("%Y-%m-%dT%H:%M:%S",
+                    "%Y-%m-%d %H:%M:%S",
+                    "%Y-%m-%dT%H:%M",
+                    "%Y-%m-%d %H:%M",
+                    "%Y-%m-%d"):
+            try:
+                return datetime.strptime(s, fmt)
+            except ValueError:
+                continue
+        return default
+
+
+    fecha_ini = _parse_dt(request.form.get("fecha_ini"), datetime.now()-timedelta(days=7))
+    fecha_fin = _parse_dt(request.form.get("fecha_fin"), datetime.now())
+
+    df_sql = fetch_sql_series(equip_grp, equipment, signal_id, fecha_ini, fecha_fin).copy()
+    if not df_sql.empty:
+        df_sql["Fecha"] = df_sql["TIME_FULL"].dt.strftime("%Y-%m-%d")
+        df_sql["Hora"]  = df_sql["TIME_FULL"].dt.strftime("%H:%M:%S")
+        df_sql_out = df_sql[["Fecha","Hora","VALUE","OLD","BAD"]]
+    else:
+        df_sql_out = df_sql
+
+    merged_out = None
+    if comparar_chk:
+        lat, lon = get_coords_para_equipo(equip_grp, equipment)
+        if lat is not None and lon is not None:
+            dfw = fetch_weather_history_influx(equip_grp, fecha_ini, fecha_fin)
+            if dfw.empty:
+                try:
+                    dfw = fetch_weather_history(lat, lon, fecha_ini, fecha_fin)
+                except Exception:
+                    dfw = pd.DataFrame(columns=["time","temperature","relative_humidity","windspeed","winddirection"])
+            if not df_sql.empty:
+                sql_hour = (df_sql.dropna(subset=["VALUE"])
+                            .assign(TIME_H=lambda x: pd.to_datetime(x["TIME_FULL"], errors="coerce").dt.floor("H"))
+                            .groupby("TIME_H", as_index=False).agg(VALUE=("VALUE","mean")))
+                merged = sql_hour.merge(dfw, left_on="TIME_H", right_on="time", how="left")
+                merged.rename(columns={"TIME_H":"time"}, inplace=True)
+                merged_out = merged[["time","VALUE","temperature","relative_humidity","windspeed","winddirection"]]
+                merged_out.rename(columns={
+                    "time":"Fecha-Hora","VALUE":"Corriente","temperature":"Temperatura",
+                    "relative_humidity":"Humedad","windspeed":"Viento(kph)","winddirection":"Dir.Viento"
+                }, inplace=True)
+
+    sio = StringIO()
+    if merged_out is not None:
+        merged_out.to_csv(sio, index=False)
+        fname = f"analisis_{equip_grp}_{equipment}_{signal_id}_comparacion.csv"
+    else:
+        df_sql_out.to_csv(sio, index=False)
+        fname = f"analisis_{equip_grp}_{equipment}_{signal_id}.csv"
+
+    bio = BytesIO(sio.getvalue().encode("utf-8-sig"))
+    return send_file(bio, as_attachment=True, download_name=fname, mimetype="text/csv; charset=utf-8")

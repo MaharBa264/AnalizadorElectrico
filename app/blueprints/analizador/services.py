@@ -94,8 +94,8 @@ def fetch_sql_series(equip_grp, equipment, signal_id, start_dt, end_dt):
     if not q:
         raise RuntimeError("Falta SQL_ANALOG_QUERY en .env")
 
-    ts = start_dt.replace(minute=0, second=0, microsecond=0)
-    te = end_dt.replace(minute=0, second=0, microsecond=0)
+    ts = start_dt
+    te = end_dt
     params = [equip_grp, equipment, signal_id, ts, te]
     rows = sql.query_list(q, params=params)
     if not rows:
@@ -187,3 +187,41 @@ def fetch_weather_history_influx(equip_grp, start_dt, end_dt):
         return df.sort_values("time")
     except Exception:
         return pd.DataFrame(columns=["time","temperature","relative_humidity","windspeed","winddirection"])
+
+def _load_sql_query():
+    """
+    Prioriza SQL_ANALOG_QUERY_FILE si existe; si no, usa SQL_ANALOG_QUERY.
+    """
+    path = os.getenv("SQL_ANALOG_QUERY_FILE", "").strip()
+    if path and os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as f:
+            q = f.read().strip()
+            if q:
+                return q
+    q = os.getenv("SQL_ANALOG_QUERY", "").strip()
+    if not q:
+        raise RuntimeError("Falta SQL_ANALOG_QUERY o SQL_ANALOG_QUERY_FILE en .env")
+    return q
+
+def fetch_sql_series(equip_grp, equipment, signal_id, start_dt, end_dt):
+    q = _load_sql_query()  # <-- usa archivo o env
+    ts = start_dt.replace(minute=0, second=0, microsecond=0)
+    te = end_dt.replace(minute=0, second=0, microsecond=0)
+    params = [equip_grp, equipment, signal_id, ts, te]
+    rows = sql.query_list(q, params=params)
+    if not rows:
+        return pd.DataFrame(columns=["TIME_FULL", "VALUE", "OLD", "BAD"])
+
+    df = pd.DataFrame(rows)
+    # Normalización robusta
+    for c in list(df.columns):
+        if c.lower() == "time":
+            df.rename(columns={c: "TIME_FULL"}, inplace=True)
+    df["TIME_FULL"] = pd.to_datetime(df["TIME_FULL"], errors="coerce", infer_datetime_format=True)
+    df["VALUE"] = pd.to_numeric(df["VALUE"], errors="coerce")
+    for c in ("OLD","BAD"):
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0).astype(int)
+        else:
+            df[c] = 0
+    return df.sort_values("TIME_FULL")

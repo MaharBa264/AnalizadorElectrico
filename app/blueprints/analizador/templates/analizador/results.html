@@ -89,6 +89,28 @@
                     {% endif %}
                     <hr>
                     <div class="d-grid gap-2">
+                    <form method="POST" action="{{ url_for('analizador.exportar_xlsx') }}" class="mb-2">
+                        <input type="hidden" name="equip_grp" value="{{ equip_grp }}">
+                        <input type="hidden" name="equipment" value="{{ equipment }}">
+                        <input type="hidden" name="signal_id" value="{{ signal_id }}">
+                        <input type="hidden" name="fecha_ini" value="{{ fecha_ini }}">
+                        <input type="hidden" name="fecha_fin" value="{{ fecha_fin }}">
+                        <input type="hidden" name="comparar_con_clima" value="1">
+                        <button class="btn btn-outline-success btn-sm w-100">Exportar XLSX</button>
+                    </form>
+                    </div>
+                    <div class="d-grid gap-2">
+                    <form method="POST" action="{{ url_for('analizador.exportar_csv') }}">
+                        <input type="hidden" name="equip_grp" value="{{ equip_grp }}">
+                        <input type="hidden" name="equipment" value="{{ equipment }}">
+                        <input type="hidden" name="signal_id" value="{{ signal_id }}">
+                        <input type="hidden" name="fecha_ini" value="{{ fecha_ini }}">
+                        <input type="hidden" name="fecha_fin" value="{{ fecha_fin }}">
+                        <input type="hidden" name="comparar_con_clima" value="1">
+                        <button class="btn btn-outline-primary btn-sm w-100">Exportar CSV</button>
+                    </form>
+                    </div>
+                    <div class="d-grid gap-2">
                         {% if station_info %}
                         <a href="https://www.google.com/maps?q={{ station_info.latitud|replace(',', '.') }},{{ station_info.longitud|replace(',', '.') }}" target="_blank" class="btn btn-info">Ver en Google Maps</a>
                         {% endif %}
