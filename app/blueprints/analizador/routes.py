@@ -1,11 +1,13 @@
-from datetime import datetime, timedelta
 import json
+import os
 import pandas as pd
+from datetime import datetime, timedelta
 from io import BytesIO
 from flask import render_template, request, redirect, url_for, flash, send_file
 from flask_login import login_required
+from app.services.weather import forecast_hourly
 from . import bp
-from .services import get_signal_hierarchy, get_coords_para_equipo, fetch_sql_series, fetch_weather_history, make_trend_payload
+from .services import get_signal_hierarchy, get_coords_para_equipo, fetch_sql_series, fetch_weather_history, make_trend_payload, fetch_weather_history_influx
 from .compare import comparar_corriente_vs_temp, graficar_corriente_vs_temp
 
 def _parse_dt(s, default=None):
@@ -74,11 +76,12 @@ def analizar_sql():
             time_data=time_data
         )
 
-    # 2) Comparación con clima (WeatherAPI histórico + forecast corto)
+    # 2) Comparación con clima (histórico: Influx; pronóstico: WeatherAPI)
     lat, lon = get_coords_para_equipo(equip_grp, equipment)
     station_info = None
     if lat is None or lon is None:
-        flash("No hay coordenadas asociadas al equipo para obtener temperatura.", "warning")
+        flash("No hay coordenadas asociadas al equipo para obtener pronóstico.", "warning")
+        # seguimos sin clima: devolvemos solo la vista SQL
         return render_template(
             "analizador/resultados_sql.html",
             datos=datos,
@@ -91,18 +94,43 @@ def analizar_sql():
     else:
         station_info = {"latitud": lat, "longitud": lon}
 
-    dfw = fetch_weather_history(lat, lon, fecha_ini, fecha_fin)
+    # Histórico horario de clima → primero Influx, si no hay datos intentamos WeatherAPI (fallback)
+    dfw = fetch_weather_history_influx(equip_grp, fecha_ini, fecha_fin)
+    if dfw.empty:
+        try:
+            dfw = fetch_weather_history(lat, lon, fecha_ini, fecha_fin)
+        except Exception:
+            dfw = pd.DataFrame(columns=["time","temperature","relative_humidity","windspeed","winddirection"])
 
-    # Merge por hora (promedio horario de VALUE)
-    sql_hour = (df_sql
-                .dropna(subset=["VALUE"])
-                .assign(TIME_H=df_sql["TIME_FULL"].dt.floor("H"))
-                .groupby("TIME_H", as_index=False).agg(VALUE=("VALUE","mean"))
-               )
+    # Garantiza datetime (por si el driver devolvió strings/objeto)
+    if not pd.api.types.is_datetime64_any_dtype(df_sql["TIME_FULL"]):
+        df_sql["TIME_FULL"] = pd.to_datetime(df_sql["TIME_FULL"], errors="coerce", infer_datetime_format=True)
+
+    # Promedio horario de corriente y merge por hora
+    sql_hour = (
+        df_sql
+        .dropna(subset=["VALUE", "TIME_FULL"])
+        .assign(TIME_H=lambda x: pd.to_datetime(x["TIME_FULL"], errors="coerce").dt.floor("H"))
+        .groupby("TIME_H", as_index=False)
+        .agg(VALUE=("VALUE","mean"))
+    )
     merged = sql_hour.merge(dfw, left_on="TIME_H", right_on="time", how="left")
     merged.rename(columns={"TIME_H":"time"}, inplace=True)
 
-    # Tabla HTML para detalles en la vista "results.html"
+    # === NUEVO: datos para gráficos D3 ===
+    # 1) Scatter (Temp vs Corriente) -> necesita keys: temperature, VALUE
+    scatter_df = merged.dropna(subset=["VALUE","temperature"]).copy()
+    try:
+        scatter_df["VALUE"] = pd.to_numeric(scatter_df["VALUE"], errors="coerce")
+        scatter_df["temperature"] = pd.to_numeric(scatter_df["temperature"], errors="coerce")
+    except Exception:
+        pass
+    scatter_df = scatter_df.dropna(subset=["VALUE","temperature"])
+    scatter_data = scatter_df[["temperature","VALUE"]].to_dict(orient="records")
+
+    # 2) Serie de tiempo (ya la tenés en time_data)
+
+    # Tabla HTML para "Datos Detallados"
     table_html = (merged[["time","VALUE","temperature","relative_humidity","windspeed","winddirection"]]
                   .rename(columns={
                     "time":"Fecha-Hora","VALUE":"Corriente","temperature":"Temperatura",
@@ -114,57 +142,72 @@ def analizar_sql():
     correlation = None
     slope = None
     intercept = None
-    valid = merged.dropna(subset=["VALUE","temperature"])
-    if not valid.empty:
+    if not scatter_df.empty:
         try:
-            correlation = float(valid["VALUE"].corr(valid["temperature"]))
+            correlation = float(scatter_df["VALUE"].corr(scatter_df["temperature"]))
         except Exception:
             correlation = None
         try:
             import numpy as np
-            slope, intercept = np.polyfit(valid["temperature"], valid["VALUE"], 1)
+            slope, intercept = np.polyfit(scatter_df["temperature"], scatter_df["VALUE"], 1)
         except Exception:
             slope = intercept = None
 
-    # Forecast próximo 3 días (si hay regresión)
+    # Pronóstico próximo 3 días (WeatherAPI) -> requiere WEATHERAPI_KEY
     forecast_list = []
-    if slope is not None and intercept is not None:
-        try:
-            fc = forecast_hourly(lat, lon, days=3)  # WeatherAPI forecast
-            hours = (fc.get("forecast",{}).get("forecastday",[]))
-            # Usamos extremos por día (min/max de temp) para proyectar corriente
-            for day in hours:
-                date = day.get("date")
-                try:
-                    tmax = day.get("day",{}).get("maxtemp_c")
-                    tmin = day.get("day",{}).get("mintemp_c")
-                except Exception:
-                    tmax = tmin = None
-                forecast_list.append({
-                    "date": date,
-                    "forecast_max": tmax,
-                    "predicted_current_max": (slope*tmax + intercept) if tmax is not None else None,
-                    "forecast_min": tmin,
-                    "predicted_current_min": (slope*tmin + intercept) if tmin is not None else None
-                })
-        except Exception:
-            forecast_list = []
+    forecast_debug = None  # <-- para mostrar en la tarjeta de resumen
 
-    # Helpers exactamente como en tu app vieja
-    tabla_comparacion = comparar_corriente_vs_temp(
-        merged.rename(columns={"time":"TIME_FULL"})  # esperan TIME_FULL
+    if slope is None or intercept is None:
+        forecast_debug = "Sin regresión: no hay suficientes pares válidos (temperatura/corriente) para estimar la recta."
+    else:
+        api_key = os.getenv("WEATHERAPI_KEY", "")
+        if not api_key:
+            forecast_debug = "Falta WEATHERAPI_KEY en .env (no se puede consultar WeatherAPI)."
+        else:
+            try:
+                fc = forecast_hourly(lat, lon, days=3)
+                days = fc.get("forecast", {}).get("forecastday", [])
+                if not days:
+                    forecast_debug = "WeatherAPI no devolvió 'forecast.forecastday'."
+                else:
+                    for day in days:
+                        date = day.get("date")
+                        dayblock = day.get("day", {}) or {}
+                        tmax = dayblock.get("maxtemp_c")
+                        tmin = dayblock.get("mintemp_c")
+                        forecast_list.append({
+                            "date": date,
+                            "forecast_max": tmax,
+                            "predicted_current_max": (slope*tmax + intercept) if tmax is not None else None,
+                            "forecast_min": tmin,
+                            "predicted_current_min": (slope*tmin + intercept) if tmin is not None else None
+                        })
+                    if not forecast_list:
+                        forecast_debug = "No hubo temperaturas máximas/mínimas en la respuesta de WeatherAPI."
+            except Exception as e:
+                forecast_debug = "Error al pedir pronóstico a WeatherAPI: {}".format(e)
+    # Fuente del histórico usada: Influx si trajo algo; si no, WeatherAPI; si ninguna, 'N/A'
+    hist_source = "Influx" if not dfw.empty else ("WeatherAPI" if "dfw" in locals() and isinstance(dfw, pd.DataFrame) else "N/A")
+
+    # LOG para depurar rápido
+    from flask import current_app
+    current_app.logger.info(
+        "ANALIZADOR DEBUG | hist_source=%s | sql_rows=%s | sql_hour_rows=%s | clima_rows=%s | scatter_points=%s | has_reg=%s | forecast_days=%s | reason=%s",
+        hist_source, len(df_sql), len(sql_hour), len(dfw) if isinstance(dfw, pd.DataFrame) else 0,
+        len(scatter_data), slope is not None, len(forecast_list), forecast_debug
     )
-    grafico_base64 = graficar_corriente_vs_temp(
-        merged.rename(columns={"time":"TIME_FULL"})
-    )
+
 
     return render_template(
         "analizador/results.html",
         station_label=f"{equip_grp} / {equipment} / {signal_id}",
         table=table_html,
         time_data=time_data,
+        scatter_data=scatter_data,     # <-- para D3
         correlation=correlation,
         forecast_list=forecast_list,
+        forecast_debug=forecast_debug, # <-- NUEVO
+        hist_source=hist_source,       # <-- NUEVO
         station_info=station_info,
     )
 

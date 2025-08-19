@@ -56,6 +56,18 @@
                 <div class="card-body">
                     <p class="card-text text-center"><strong>Coeficiente de correlación: {{ correlation | round(2) }}</strong></p>
                     <hr>
+                    {% if hist_source %}
+                    <p class="text-muted small mb-2">Fuente clima (histórico): <b>{{ hist_source }}</b></p>
+                    {% endif %}
+
+                    {% if not forecast_list or forecast_list|length == 0 %}
+                    <p class="mb-1"><em>No se pudo obtener el pronóstico.</em></p>
+                    {% if forecast_debug %}
+                        <div class="alert alert-warning small mb-3">
+                        <strong>DEBUG:</strong> {{ forecast_debug }}
+                        </div>
+                    {% endif %}
+                    {% endif %}
                     <h6>Pronóstico (Próximos 3 días)</h6>
                     {% if forecast_list and forecast_list|length > 0 %}
                     <table class="table table-sm table-bordered">

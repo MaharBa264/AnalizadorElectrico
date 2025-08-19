@@ -106,7 +106,7 @@ def fetch_sql_series(equip_grp, equipment, signal_id, start_dt, end_dt):
     for c in list(df.columns):
         if c.lower() == "time":
             df.rename(columns={c: "TIME_FULL"}, inplace=True)
-    df["TIME_FULL"] = pd.to_datetime(df["TIME_FULL"])
+    df["TIME_FULL"] = pd.to_datetime(df["TIME_FULL"], errors="coerce", infer_datetime_format=True)
     df["VALUE"] = pd.to_numeric(df["VALUE"], errors="coerce")
     for c in ("OLD","BAD"):
         if c in df.columns:
@@ -156,3 +156,34 @@ def make_trend_payload(df_sql):
     tmp = df_sql.dropna(subset=["TIME_FULL","VALUE"])[["TIME_FULL","VALUE"]].copy()
     tmp["Time"] = pd.to_datetime(tmp["TIME_FULL"]).dt.strftime("%Y-%m-%dT%H:%M:%S")
     return tmp[["Time","VALUE"]].to_dict(orient="records")
+
+
+def fetch_weather_history_influx(equip_grp, start_dt, end_dt):
+    """
+    Lee clima horario desde Influx (bucket/measurement/tag configurados en .env vía services.influx).
+    Retorna DataFrame con columnas: time, temperature, relative_humidity, windspeed, winddirection
+    """
+    try:
+        from app.services.influx import query_weather_hourly
+    except Exception as e:
+        # Si la lib no está instalada o hay error, no rompemos
+        return pd.DataFrame(columns=["time","temperature","relative_humidity","windspeed","winddirection"])
+
+    try:
+        rows = query_weather_hourly(equip_grp, start_dt, end_dt)  # lista de dicts
+        if not rows:
+            return pd.DataFrame(columns=["time","temperature","relative_humidity","windspeed","winddirection"])
+        df = pd.DataFrame(rows)
+        if "time" not in df.columns:
+            # algunos drivers devuelven "_time"
+            if "_time" in df.columns:
+                df.rename(columns={"_time":"time"}, inplace=True)
+        df["time"] = pd.to_datetime(df["time"]).dt.floor("H")
+        # columnas ausentes → NaN
+        for c in ("temperature","relative_humidity","windspeed","winddirection"):
+            if c not in df.columns:
+                df[c] = pd.NA
+        # si viene en m/s o mph podrías normalizar acá (dejamos tal cual)
+        return df.sort_values("time")
+    except Exception:
+        return pd.DataFrame(columns=["time","temperature","relative_humidity","windspeed","winddirection"])
