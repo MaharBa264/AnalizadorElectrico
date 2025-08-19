@@ -2,37 +2,41 @@
 {% block title %}Proyección LSTM{% endblock %}
 {% block content %}
 <div class="container my-3">
-  <h3 class="mb-3">Proyección LSTM — {{ equip_grp }} / {{ equipment }} / {{ signal_id }}</h3>
+  <h3 class="mb-3">Proyección — {{ equip_grp }} / {{ equipment }} / {{ signal_id }}</h3>
+
   <div class="card p-3 mb-3">
     <canvas id="chart" style="width:100%;max-width:1000px;height:380px;"></canvas>
   </div>
+
   <div class="card p-3">
     {{ tabla | safe }}
   </div>
+
   <a href="{{ url_for('analizador.index') }}" class="btn btn-secondary mt-3">Volver</a>
 </div>
+
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
 const labels = {{ labels|safe }};
 const values = {{ values|safe }};
-const ctx = document.getElementById('chart').getContext('2d');
-window.chart = new Chart(ctx, {
+const temps  = {{ temps|safe }};
+
+new Chart(document.getElementById('chart').getContext('2d'), {
   type: 'line',
   data: {
-    labels: labels,
-    datasets: [{
-      label: 'Pronóstico (hora a hora)',
-      data: values,
-      fill: false,
-      tension: 0.2
-    }]
+    labels,
+    datasets: [
+      { label: 'Corriente (pronóstico)', data: values, yAxisID: 'y', tension: 0.2 },
+      { label: 'Temperatura (°C)', data: temps, yAxisID: 'y1', tension: 0.2 }
+    ]
   },
   options: {
     responsive: true,
     interaction: { mode: 'index', intersect: false },
     scales: {
-      x: { title: { display: true, text: 'Fecha-Hora' } },
-      y: { title: { display: true, text: 'Corriente (estimada)' } }
+      y:  { title: { display: true, text: 'Corriente (A)' }, position: 'left' },
+      y1: { title: { display: true, text: 'Temperatura (°C)' }, position: 'right', grid: { drawOnChartArea: false } },
+      x:  { title: { display: true, text: 'Fecha-Hora' } }
     }
   }
 });

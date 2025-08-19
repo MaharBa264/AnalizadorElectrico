@@ -1,4 +1,11 @@
 {% extends "base.html" %}
+{% macro fmt2(x) -%}
+  {% if x is not none %}
+    {{ '%.2f'|format(x) }}
+  {% else %}
+    —
+  {% endif %}
+{%- endmacro %}
 {% block title %}Resultados SQL{% endblock %}
 
 {% block content %}
@@ -73,12 +80,12 @@
                     <div class="d-flex justify-content-around text-center mb-3">
                         <div>
                             <p class="mb-0 text-muted">Máximo</p>
-                            <h4 class="mb-0 text-danger">{{ max_value|round(2) }}</h4>
+                            <h4 class="mb-0 text-danger">{{ fmt2(max_value) }}</h4>
                             <small>{{ max_time|replace('T',' ') }}</small>
                         </div>
                         <div>
                             <p class="mb-0 text-muted">Mínimo</p>
-                            <h4 class="mb-0 text-primary">{{ min_value|round(2) }}</h4>
+                            <h4 class="mb-0 text-primary">{{ fmt2(min_value) }}</h4>
                             <small>{{ min_time|replace('T',' ') }}</small>
                         </div>
                     </div>
@@ -98,28 +105,53 @@
                             <button type="submit" class="btn btn-primary w-100"><span class="material-symbols-outlined align-middle">download</span> Exportar a Excel</button>
                         </form>
 
-                    <div class="row g-2 mt-2">
+                    <div class="row g-2 mt-2 align-items-end">
                         <div class="col-md-6 d-grid">
                             <form method="post" action="{{ url_for('analizador.entrenar_lstm') }}">
-                                <input type="hidden" name="equip_grp" value="{{ equip_grp }}">
-                                <input type="hidden" name="equipment" value="{{ equipment }}">
-                                <input type="hidden" name="signal_id" value="{{ signal_id }}">
-                                <input type="hidden" name="fecha_ini" value="{{ fecha_ini }}">
-                                <input type="hidden" name="fecha_fin" value="{{ fecha_fin }}">
-                                <button type="submit" class="btn btn-outline-primary">Entrenar LSTM (30 días)</button>
+                            <input type="hidden" name="equip_grp" value="{{ equip_grp }}">
+                            <input type="hidden" name="equipment" value="{{ equipment }}">
+                            <input type="hidden" name="signal_id" value="{{ signal_id }}">
+                            <!-- Estos dos quedan por si enviás fechas desde la vista -->
+                            <input type="hidden" name="fecha_ini" value="{{ fecha_ini }}">
+                            <input type="hidden" name="fecha_fin" value="{{ fecha_fin }}">
+                            <button type="submit" class="btn btn-outline-primary">Entrenar (120 días)</button>
                             </form>
                         </div>
-                        <div class="col-md-6 d-grid">
-                            <form method="post" action="{{ url_for('analizador.proyectar_lstm') }}">
-                                <input type="hidden" name="equip_grp" value="{{ equip_grp }}">
-                                <input type="hidden" name="equipment" value="{{ equipment }}">
-                                <input type="hidden" name="signal_id" value="{{ signal_id }}">
-                                <input type="hidden" name="pasos" value="24">
-                                <button type="submit" class="btn btn-outline-success">Proyectar 24 h (LSTM)</button>
+
+                        <div class="col-md-6">
+                            <form method="post" action="{{ url_for('analizador.proyectar_lstm') }}" class="row g-2">
+                            <input type="hidden" name="equip_grp" value="{{ equip_grp }}">
+                            <input type="hidden" name="equipment" value="{{ equipment }}">
+                            <input type="hidden" name="signal_id" value="{{ signal_id }}">
+
+                            <div class="col-6">
+                                <label class="form-label mb-1">Horizonte</label>
+                                <select class="form-select" name="pasos">
+                                <option value="24">24 h</option>
+                                <option value="48">48 h</option>
+                                <option value="72">72 h</option>
+                                <option value="96" selected>96 h</option>
+                                </select>
+                            </div>
+
+                            <div class="col-6 form-check mt-4">
+                                <input class="form-check-input" type="checkbox" id="train_missing" name="train_if_missing" value="1" checked>
+                                <label class="form-check-label" for="train_missing">
+                                Entrenar si no hay modelo
+                                </label>
+                            </div>
+
+                            <div class="col-12 d-grid">
+                                <button type="submit" class="btn btn-success">Proyectar</button>
+                            </div>
                             </form>
                         </div>
-                    </div>
-    
+                        </div>
+
+                        <a class="btn btn-outline-primary"
+                        href="{{ url_for('analizador.mapa_red', equip_grp=equip_grp, equipment=equipment) }}">
+                        Ver mapa de la red
+                        </a>
                     </div>
                 </div>
             </div>

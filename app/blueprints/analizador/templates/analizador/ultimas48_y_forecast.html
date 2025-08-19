@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Últimas 48 h y Proyección{% endblock %}
+{% block content %}
+<div class="container my-3">
+  <h3 class="mb-3">Últimas 48 h — {{ equip_grp }} / {{ equipment }} / {{ signal_id }}</h3>
+
+  <div class="card p-3 mb-4">
+    <h6 class="mb-3">Corriente real vs predicha (48 h)</h6>
+    <canvas id="chart48" style="width:100%;max-width:1200px;height:380px;"></canvas>
+  </div>
+
+  <div class="card p-3">
+    <h6 class="mb-3">Proyección del modelo (48 h)</h6>
+    <canvas id="chartF" style="width:100%;max-width:1200px;height:380px;"></canvas>
+  </div>
+
+  <a href="{{ url_for('analizador.index') }}" class="btn btn-secondary mt-3">Volver</a>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+const labelsBT = {{ labels_bt|safe }};
+const realBT   = {{ real_bt|safe }};
+const predBT   = {{ pred_bt|safe }};
+
+const labelsF = {{ labels_f|safe }};
+const valuesF = {{ values_f|safe }};
+
+// 1) Real vs Predicha (mismo gráfico)
+new Chart(document.getElementById('chart48').getContext('2d'), {
+  type: 'line',
+  data: {
+    labels: labelsBT,
+    datasets: [
+      { label: 'Corriente (real)', data: realBT, tension: 0.2 },
+      { label: 'Corriente (predicha)', data: predBT, tension: 0.2 }
+    ]
+  },
+  options: {
+    responsive: true,
+    interaction: { mode: 'index', intersect: false },
+    scales: {
+      y: { title: { display: true, text: 'Corriente (A)' } },
+      x: { title: { display: true, text: 'Fecha-Hora' } }
+    }
+  }
+});
+
+// 2) Proyección futura 48 h
+new Chart(document.getElementById('chartF').getContext('2d'), {
+  type: 'line',
+  data: {
+    labels: labelsF,
+    datasets: [{ label: 'Pronóstico (próximas 48 h)', data: valuesF, tension: 0.2 }]
+  },
+  options: {
+    responsive: true,
+    interaction: { mode: 'index', intersect: false },
+    scales: {
+      y: { title: { display: true, text: 'Corriente (estimada)' } },
+      x: { title: { display: true, text: 'Fecha-Hora' } }
+    }
+  }
+});
+</script>
+{% endblock %}

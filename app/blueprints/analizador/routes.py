@@ -367,7 +367,9 @@ def entrenar_lstm():
     equip_grp = request.form.get("equip_grp","").strip()
     equipment = request.form.get("equipment","").strip()
     signal_id = request.form.get("signal_id","").strip()
-    fecha_ini = _parse_dt(request.form.get("fecha_ini"), datetime.now() - timedelta(days=30))
+
+    # Por defecto: 120 días de historial
+    fecha_ini = _parse_dt(request.form.get("fecha_ini"), datetime.now() - timedelta(days=120))
     fecha_fin = _parse_dt(request.form.get("fecha_fin"), datetime.now())
 
     try:
@@ -379,30 +381,194 @@ def entrenar_lstm():
         else:
             flash(f"⚠️ No se pudo entrenar: {info.get('reason','')}", "warning")
     except Exception as e:
-        flash(f"❌ Error entrenando LSTM: {e}", "danger")
+        flash(f"❌ Error entrenando LSTM/MLP: {e}", "danger")
 
-    return redirect(url_for("analizador.index"))
-
+    # Al terminar, ir a la página de recap 48h
+    return redirect(url_for("analizador.ver_lstm_ultimas48",
+                            equip_grp=equip_grp, equipment=equipment, signal_id=signal_id))
 
 @bp.route("/proyectar_lstm", methods=["POST"])
 @login_required
 def proyectar_lstm():
-    from app.services.lstm import forecast_next_hours
+    from app.services.lstm import forecast_next_hours, train_or_update, _paths, _get_forecast_df
     equip_grp = request.form.get("equip_grp","").strip()
     equipment = request.form.get("equipment","").strip()
     signal_id = request.form.get("signal_id","").strip()
-    pasos = int(request.form.get("pasos", "24") or 24)
+
+    pasos = int(request.form.get("pasos") or 96)
+    train_if_missing = (request.form.get("train_if_missing") == "1")
+
+    paths = _paths(equip_grp, equipment, signal_id)
+    pmodel = paths["model"]
+    if not pmodel.exists():
+        if not train_if_missing:
+            flash("⚠️ No hay modelo entrenado para esta señal. Marcá 'Entrenar si no hay modelo' o ejecutá el entrenamiento manual.", "warning")
+            return redirect(url_for("analizador.index"))
+        flash("ℹ️ No había modelo. Entrenando ahora (120 días) antes de proyectar…", "info")
+        try:
+            _ = train_or_update(
+                equip_grp, equipment, signal_id,
+                datetime.now() - timedelta(days=120),
+                datetime.now(),
+                lookback=24, epochs=8
+            )
+        except Exception as e:
+            flash(f"❌ Error entrenando LSTM/MLP previo a la proyección: {e}", "danger")
+            return redirect(url_for("analizador.index"))
 
     try:
+        # Serie pronosticada de corriente
         df_pred = forecast_next_hours(equip_grp, equipment, signal_id, steps=pasos)
-        # Armar datos para Chart.js
         labels = [ts.strftime("%Y-%m-%d %H:%M") for ts in df_pred["TIME_FULL"]]
         values = [float(v) for v in df_pred["FORECAST_VALUE"]]
+
+        # Temperatura de pronóstico para las mismas horas (eje derecho)
+        try:
+            fdf = _get_forecast_df(equip_grp, equipment, pasos)  # tiene 'time' y 'temperature'
+            import pandas as pd
+            if fdf is not None and not fdf.empty:
+                tmap = {pd.to_datetime(t).strftime("%Y-%m-%d %H:%M"): float(v) if pd.notna(v) else None
+                        for t, v in zip(fdf["time"], fdf["temperature"])}
+                temps = [tmap.get(lbl, None) for lbl in labels]
+            else:
+                temps = [None]*len(labels)
+        except Exception:
+            temps = [None]*len(labels)
+
         return render_template("analizador/proyeccion_lstm.html",
             equip_grp=equip_grp, equipment=equipment, signal_id=signal_id,
-            labels=json.dumps(labels), values=json.dumps(values),
+            labels=json.dumps(labels), values=json.dumps(values), temps=json.dumps(temps),
             tabla=df_pred.to_html(classes="table table-striped table-sm", index=False)
         )
     except Exception as e:
-        flash(f"❌ Error en proyección LSTM: {e}", "danger")
+        flash(f"❌ Error en proyección LSTM/MLP: {e}", "danger")
         return redirect(url_for("analizador.index"))
+
+
+@bp.route("/ver_lstm_ultimas48", methods=["GET"])
+@login_required
+def ver_lstm_ultimas48():
+    from .services import fetch_sql_series, fetch_weather_history_influx
+    from app.services.lstm import predict_last_hours, forecast_next_hours
+    import pandas as pd
+
+    equip_grp = request.args.get("equip_grp","").strip()
+    equipment = request.args.get("equipment","").strip()
+    signal_id = request.args.get("signal_id","").strip()
+
+    ahora = datetime.now().replace(minute=0, second=0, microsecond=0)
+    ini_48 = ahora - timedelta(hours=48)
+
+    # Serie real últimas 48 h (para ejes y tabla si querés)
+    df_sql = fetch_sql_series(equip_grp, equipment, signal_id, ini_48, ahora).copy()
+    df_sql = df_sql[(df_sql["BAD"] == 0)].sort_values("TIME_FULL")
+    labels_48 = [ts.strftime("%Y-%m-%d %H:%M") for ts in pd.to_datetime(df_sql["TIME_FULL"])]
+    real_48 = [None if pd.isna(v) else float(v) for v in df_sql["VALUE"]]
+
+    # Predicción sobre las últimas 48 h (backtest con exógenos observados)
+    try:
+        df_pred, serie_real_bt = predict_last_hours(equip_grp, equipment, signal_id, hours=48)
+        # alineamos a etiquetas de df_pred
+        labels_bt = [ts.strftime("%Y-%m-%d %H:%M") for ts in df_pred["TIME_FULL"]]
+        pred_48 = [float(v) for v in df_pred["PRED_VALUE"]]
+        # real (del backtest) alineado a labels_bt
+        real_bt = [float(v) if pd.notna(v) else None for v in serie_real_bt.values]
+    except Exception:
+        labels_bt, pred_48, real_bt = [], [], []
+
+    # Forecast FUTURO 48 h (segundo gráfico)
+    try:
+        df_fut = forecast_next_hours(equip_grp, equipment, signal_id, steps=48)
+        labels_f = [ts.strftime("%Y-%m-%d %H:%M") for ts in df_fut["TIME_FULL"]]
+        values_f = [float(v) for v in df_fut["FORECAST_VALUE"]]
+    except Exception:
+        labels_f, values_f = [], []
+
+    return render_template("analizador/ultimas48_y_forecast.html",
+        equip_grp=equip_grp, equipment=equipment, signal_id=signal_id,
+        labels_bt=json.dumps(labels_bt), real_bt=json.dumps(real_bt), pred_bt=json.dumps(pred_48),
+        labels_f=json.dumps(labels_f), values_f=json.dumps(values_f)
+    )
+
+
+'''
+# --- MAPA DE RED ---
+@bp.route("/mapa_red", methods=["GET"])
+@login_required
+def mapa_red():
+    """
+    Replica la funcionalidad vieja: recibe equipment (y opcional equip_grp),
+    filtra el SHP de la red y genera un HTML estático en /static/mapa_red.html,
+    luego lo muestra embebido en un iframe.
+    """
+    import geopandas as gpd
+    from app.services.mapa import crear_mapa_red
+
+    equip_grp = request.args.get("equip_grp","").strip()
+    equipment = request.args.get("equipment","").strip()
+
+    if not equipment:
+        flash("Falta el parámetro 'equipment' para mostrar el mapa.", "warning")
+        return redirect(url_for("analizador.index"))
+
+    # Buscar el shapefile en ubicaciones típicas (compatibilidad)
+    from flask import current_app
+    app_root = Path(current_app.root_path)
+    candidates = [
+        app_root / "utils" / "shapefile" / "red_electrica.shp",     # como en app vieja
+        app_root.parent / "utils" / "shapefile" / "red_electrica.shp",
+        app_root / "static" / "geodata" / "red_electrica.shp",
+        Path("storage") / "shapefiles" / "red_electrica.shp",
+    ]
+    shp_path = None
+    for p in candidates:
+        if p.exists():
+            shp_path = p
+            break
+    if shp_path is None:
+        flash("No se encontró el shapefile de la red (red_electrica.shp). Copiá la carpeta 'utils/shapefile' de la app vieja a 'app/utils/shapefile' o a 'app/static/geodata'.", "danger")
+        return redirect(url_for("analizador.index"))
+
+    try:
+        gdf = gpd.read_file(str(shp_path))
+    except Exception as e:
+        flash(f"Error leyendo shapefile: {e}", "danger")
+        return redirect(url_for("analizador.index"))
+
+    gdf['Alimentado'] = gdf['Alimentado'].astype(str).str.strip()
+    eq = equipment.strip().lower()
+    # filtro difuso: contiene el texto del equipo
+    gdf_filtrado = gdf[gdf['Alimentado'].str.lower().str.contains(eq, na=False)].copy()
+
+    if gdf_filtrado.empty:
+        flash("No hay información geográfica para ese equipo/línea.", "warning")
+        return redirect(url_for("analizador.index"))
+
+    # columnas auxiliares para popups
+    gdf_filtrado['equip_grp'] = gdf_filtrado.get('equip_grp', equip_grp)
+    gdf_filtrado['equipment'] = equipment
+
+    # Generar mapa en /static
+    out_html = Path(current_app.static_folder) / "mapa_red.html"
+    crear_mapa_red(gdf_filtrado, str(out_html))
+
+    return render_template("analizador/mapa_red.html", equip_grp=equip_grp, equipment=equipment)
+
+    '''
+
+# --- MAPA de red (cliente, sin dependencias server) ---
+@bp.route("/mapa_red", methods=["GET"])
+@login_required
+def mapa_red():
+    equip_grp = request.args.get("equip_grp","").strip()
+    equipment = request.args.get("equipment","").strip()
+    if not equipment:
+        flash("Falta el parámetro 'equipment' para mostrar el mapa.", "warning")
+        return redirect(url_for("analizador.index"))
+    # Renderiza el template que carga el ZIP desde /static/geodata/red_electrica.zip
+    return render_template(
+        "analizador/mapa_red_client.html",
+        equip_grp=equip_grp,
+        equipment=equipment,
+        zip_url=url_for("static", filename="geodata/red_electrica.zip")
+    )
