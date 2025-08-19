@@ -1,0 +1,233 @@
+{% extends "base.html" %}
+{% block title %}Resultados SQL{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <style>
+        /* Estilos para el tooltip del gráfico D3 */
+        .d3-tooltip {
+            position: absolute;
+            text-align: center;
+            padding: 8px;
+            font: 12px sans-serif;
+            background: #fff;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            pointer-events: none;
+            opacity: 0;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        }
+    </style>
+
+    <h1 class="mb-4">Resultado de Consulta</h1>
+    <h2 class="text-muted h4 mb-4">{{ equip_grp }} / {{ equipment }} / {{ signal_id }}</h2>
+
+    <div class="row">
+        <div class="col-12 col-lg-8">
+            <div class="card shadow-sm">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">Gráfico de Tendencia</h5>
+                    <div id="trendControls">
+                        <button id="zoomInBtn" class="btn btn-outline-secondary btn-sm">Zoom +</button>
+                        <button id="zoomOutBtn" class="btn btn-outline-secondary btn-sm">Zoom –</button>
+                        <button id="toggleLineStyle" class="btn btn-outline-info btn-sm">Curva Suave</button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div id="trendChart" style="width: 100%; min-height: 300px; overflow-x: auto;"></div>
+                </div>
+            </div>
+
+            <div class="card shadow-sm mt-4">
+                 <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">Datos Completos</h5>
+                    <button class="btn btn-secondary btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#tablaCompletaCollapse" aria-expanded="false" aria-controls="tablaCompletaCollapse">
+                        Mostrar / Ocultar
+                    </button>
+                 </div>
+                 <div class="collapse" id="tablaCompletaCollapse">
+                     <div class="card-body p-0">
+                        <div class="table-responsive">
+                            <table class="table table-sm table-hover table-bordered align-middle mb-0">
+                                <thead class="table-light">
+                                    <tr><th>Fecha</th><th>Hora</th><th>VALUE</th><th>OLD</th><th>BAD</th></tr>
+                                </thead>
+                                <tbody>
+                                    {% for row in datos %}
+                                    <tr class="{% if row.OLD==1 or row.BAD==1 %}table-danger{% endif %}">
+                                        <td>{{ row.Fecha }}</td><td>{{ row.Hora }}</td><td>{{ row.VALUE }}</td><td>{{ row.OLD }}</td><td>{{ row.BAD }}</td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                     </div>
+                 </div>
+            </div>
+        </div>
+
+        <div class="col-12 col-lg-4 mt-4 mt-lg-0">
+            <div class="card shadow-sm">
+                <div class="card-header"><h5 class="mb-0">Resumen y Acciones</h5></div>
+                <div class="card-body">
+                    <div class="d-flex justify-content-around text-center mb-3">
+                        <div>
+                            <p class="mb-0 text-muted">Máximo</p>
+                            <h4 class="mb-0 text-danger">{{ max_value|round(2) }}</h4>
+                            <small>{{ max_time|replace('T',' ') }}</small>
+                        </div>
+                        <div>
+                            <p class="mb-0 text-muted">Mínimo</p>
+                            <h4 class="mb-0 text-primary">{{ min_value|round(2) }}</h4>
+                            <small>{{ min_time|replace('T',' ') }}</small>
+                        </div>
+                    </div>
+                    {% if total_muestras > 0 %}
+                    <div class="alert alert-light text-center py-2 px-3 mb-3">
+                        <b>{{ total_muestras }}</b> muestras | Promedio: <b>{{ avg_value|round(2) }}</b>
+                    </div>
+                    {% endif %}
+                    {% if hay_datos_invalidos %}
+                    <div class="alert alert-warning py-2 px-3 mb-3">
+                        <b>¡Atención!</b> Hay datos marcados como inválidos (OLD o BAD).
+                    </div>
+                    {% endif %}
+                    <div class="d-grid">
+                        <form method="post" action="/exportar_xlsx" id="exportForm">
+                            <input type="hidden" name="data" id="data_xlsx"><input type="hidden" name="export_token" value="superclave"><input type="hidden" name="equip_grp" value="{{ equip_grp }}"><input type="hidden" name="equipment" value="{{ equipment }}"><input type="hidden" name="signal_id" value="{{ signal_id }}">
+                            <button type="submit" class="btn btn-primary w-100"><span class="material-symbols-outlined align-middle">download</span> Exportar a Excel</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+            {% if forecast_list %}
+            <div class="card shadow-sm mt-4">
+                <div class="card-header"><h5 class="mb-0">Pronóstico</h5></div>
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="table table-bordered table-sm align-middle mb-0">
+                             <thead><tr><th>Fecha</th><th>T.Max</th><th>T.Min</th><th>Proy.Max</th><th>Proy.Min</th></tr></thead>
+                            <tbody>
+                                {% for f in forecast_list %}
+                                <tr><td>{{ f.date }}</td><td>{{ f.forecast_max|round(1) }}°</td><td>{{ f.forecast_min|round(1) }}°</td><td>{{ f.predicted_current_max|round(1) }}A</td><td>{{ f.predicted_current_min|round(1) }}A</td></tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<div class="d3-tooltip"></div>
+
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    document.getElementById('exportForm').addEventListener('submit', function(e){
+        document.getElementById('data_xlsx').value = JSON.stringify({{ datos | tojson }});
+    });
+
+    let smooth = false;
+    let zoomScale = 1;
+    const smoothBtn = document.getElementById('toggleLineStyle');
+    const zoomInBtn = document.getElementById('zoomInBtn');
+    const zoomOutBtn = document.getElementById('zoomOutBtn');
+    const tooltip = d3.select(".d3-tooltip");
+
+    smoothBtn.onclick = () => { smooth = !smooth; drawTrend(); };
+    zoomInBtn.onclick = () => { zoomScale = Math.min(zoomScale * 1.5, 20); drawTrend(); };
+    zoomOutBtn.onclick = () => { zoomScale = Math.max(zoomScale / 1.5, 1); drawTrend(); };
+
+    function drawTrend() {
+        const container = d3.select("#trendChart");
+        container.selectAll("*").remove();
+
+        const data = {{ time_data | tojson }};
+        if (!data || !data.length) return;
+
+        const containerWidth = container.node().getBoundingClientRect().width;
+        const margin = {top: 20, right: 30, bottom: 40, left: 50};
+        const width = (containerWidth - margin.left - margin.right); // Ancho base
+        const height = 300 - margin.top - margin.bottom;
+
+        // El SVG tiene el ancho del contenedor, el zoom se aplica a la escala X
+        const svg = container.append("svg")
+            .attr("width", width + margin.left + margin.right)
+            .attr("height", height + margin.top + margin.bottom)
+            .append("g").attr("transform", `translate(${margin.left},${margin.top})`);
+        
+        const parseTime = d3.timeParse("%Y-%m-%dT%H:%M:%S");
+        data.forEach(d => {
+            d.parsedTime = parseTime(d.Time);
+            d.VALUE = +d.VALUE;
+        });
+
+        // --- CORRECCIÓN DEL ERROR DE SINTAXIS ---
+        // El código de las escalas y los ejes debe estar FUERA del forEach.
+        const [tMinOriginal, tMaxOriginal] = d3.extent(data, d => d.parsedTime);
+        const totalMs = tMaxOriginal - tMinOriginal;
+        const mid = new Date((tMaxOriginal.getTime() + tMinOriginal.getTime()) / 2);
+        const newMs = totalMs / zoomScale;
+        const tMin = new Date(mid.getTime() - newMs / 2);
+        const tMax = new Date(mid.getTime() + newMs / 2);
+
+        const x = d3.scaleTime().domain([tMin, tMax]).range([0, width]);
+        const y = d3.scaleLinear().domain(d3.extent(data, d => d.VALUE)).range([height, 0]).nice();
+        
+        svg.append("g").attr("transform", `translate(0,${height})`).call(d3.axisBottom(x));
+        svg.append("g").call(d3.axisLeft(y));
+
+        const line = d3.line().x(d => x(d.parsedTime)).y(d => y(d.VALUE));
+        if (smooth) line.curve(d3.curveMonotoneX);
+
+        // Clip-path para que la línea no se salga del área del gráfico al hacer zoom
+        svg.append("defs").append("clipPath")
+            .attr("id", "clip")
+            .append("rect")
+            .attr("width", width)
+            .attr("height", height);
+
+        svg.append("path")
+            .datum(data)
+            .attr("clip-path", "url(#clip)")
+            .attr("fill", "none").attr("stroke", "#1a73e8").attr("stroke-width", 2).attr("d", line);
+
+        const focus = svg.append("g")
+            .attr("class", "focus")
+            .style("display", "none");
+        
+        focus.append("circle").attr("r", 5).attr("class", "line-point");
+
+        svg.append("rect")
+            .attr("class", "overlay")
+            .attr("width", width)
+            .attr("height", height)
+            .style("fill", "none")
+            .style("pointer-events", "all")
+            .on("mouseover", () => { focus.style("display", null); tooltip.style("opacity", .9); })
+            .on("mouseout", () => { focus.style("display", "none"); tooltip.style("opacity", 0); })
+            .on("mousemove", mousemove);
+
+        const bisectDate = d3.bisector(d => d.parsedTime).left;
+
+        function mousemove(event) {
+            const x0 = x.invert(d3.pointer(event)[0]);
+            const i = bisectDate(data, x0, 1);
+            const d0 = data[i - 1];
+            const d1 = data[i];
+            const d = x0 - d0.parsedTime > d1.parsedTime - x0 ? d1 : d0;
+            focus.attr("transform", `translate(${x(d.parsedTime)},${y(d.VALUE)})`);
+            tooltip.html(`<b>${d.Time.replace('T', ' ')}</b><br/>Valor: ${d.VALUE}`)
+                .style("left", (event.pageX + 15) + "px")
+                .style("top", (event.pageY - 28) + "px");
+        }
+    }
+    
+    drawTrend();
+    window.addEventListener('resize', drawTrend);
+});
+</script>
+{% endblock %}

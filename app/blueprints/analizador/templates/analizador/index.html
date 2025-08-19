@@ -1,27 +1,89 @@
 {% extends "base.html" %}
-{% block title %}Analizador{% endblock %}
+{% block title %}Analizador de Analógicas{% endblock %}
 {% block content %}
-<div class="row g-3">
-  <div class="col-md-6">
-    <a class="text-decoration-none" href="{{ url_for('analizador.sql_demo') }}">
-      <div class="card shadow-sm h-100">
-        <div class="card-body">
-          <h3 class="h6 mb-1">🧪 Demo SQL</h3>
-          <p class="text-muted mb-0">Probar conexión a SQL Server (lista sys.tables).</p>
+<div class="container my-5">
+  <div class="card shadow-sm mb-5">
+    <div class="card-header bg-primary text-white">
+      <h2 class="h4 mb-0">Consultar desde Eterra Archive</h2>
+    </div>
+    <div class="card-body">
+      <form id="form_sql" action="{{ url_for('analizador.analizar_sql') }}" method="post">
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label for="equip_grp" class="form-label">Grupo de Equipo</label>
+            <select name="equip_grp" id="equip_grp" class="form-select form-select-lg" required>
+              <option value="" disabled selected>-- Seleccione un Grupo --</option>
+              {% for grp, equips in estructura.items() %}
+                <option value="{{ grp }}">{{ grp }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-md-6">
+            <label for="equipment" class="form-label">Equipo</label>
+            <select name="equipment" id="equipment" class="form-select form-select-lg" required>
+              <option value="" disabled selected>-- Seleccione un Equipo --</option>
+            </select>
+          </div>
+          <div class="col-md-6">
+            <label for="signal_id" class="form-label">Señal</label>
+            <select name="signal_id" id="signal_id" class="form-select form-select-lg" required>
+              <option value="" disabled selected>-- Seleccione una Señal --</option>
+            </select>
+          </div>
+          <div class="col-md-3">
+            <label for="fecha_ini" class="form-label">Fecha Inicio</label>
+            <input type="datetime-local" name="fecha_ini" id="fecha_ini" class="form-control form-control-lg" required>
+          </div>
+          <div class="col-md-3">
+            <label for="fecha_fin" class="form-label">Fecha Fin</label>
+            <input type="datetime-local" name="fecha_fin" id="fecha_fin" class="form-control form-control-lg" required>
+          </div>
+          <div class="col-12">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" name="comparar_con_clima" value="1" id="comparar_con_clima">
+              <label class="form-check-label" for="comparar_con_clima">
+                Comparar señal con datos de clima (WeatherAPI)
+              </label>
+            </div>
+          </div>
+          <div class="col-12 d-flex align-items-center gap-3 mt-4">
+            <button type="submit" class="btn btn-primary btn-lg">Analizar Datos SQL</button>
+            <button type="submit" class="btn btn-outline-success btn-lg"
+                    formaction="{{ url_for('analizador.exportar_xlsx') }}">
+              Exportar XLSX
+            </button>
+          </div>
         </div>
-      </div>
-    </a>
-  </div>
-
-  <div class="col-md-6">
-    <a class="text-decoration-none" href="{{ url_for('analizador.sql_browser') }}">
-      <div class="card shadow-sm h-100">
-        <div class="card-body">
-          <h3 class="h6 mb-1">🧭 SQL Browser</h3>
-          <p class="text-muted mb-0">Vista previa segura de tablas y exportación a CSV (solo admin).</p>
-        </div>
-      </div>
-    </a>
+      </form>
+    </div>
   </div>
 </div>
+
+<script>
+  const estructura = {{ estructura|tojson|safe }};
+  const equipGrpSelect = document.getElementById('equip_grp');
+  const equipmentSelect = document.getElementById('equipment');
+  const signalSelect = document.getElementById('signal_id');
+  equipGrpSelect.addEventListener('change', function () {
+    const grp = this.value;
+    equipmentSelect.innerHTML = '<option value="" disabled selected>-- Seleccione un Equipo --</option>';
+    signalSelect.innerHTML = '<option value="" disabled selected>-- Seleccione una Señal --</option>';
+    if (grp && estructura[grp]) {
+      for (const eq in estructura[grp]) {
+        const opt = document.createElement('option'); opt.value = eq; opt.textContent = eq;
+        equipmentSelect.appendChild(opt);
+      }
+    }
+  });
+  equipmentSelect.addEventListener('change', function () {
+    const grp = equipGrpSelect.value; const eq = this.value;
+    signalSelect.innerHTML = '<option value="" disabled selected>-- Seleccione una Señal --</option>';
+    if (grp && eq && estructura[grp] && estructura[grp][eq]) {
+      for (const sig of estructura[grp][eq]) {
+        const opt = document.createElement('option'); opt.value = sig; opt.textContent = sig;
+        signalSelect.appendChild(opt);
+      }
+    }
+  });
+</script>
 {% endblock %}

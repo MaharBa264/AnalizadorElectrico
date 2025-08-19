@@ -1,6 +1,9 @@
+import os, csv
+import pandas as pd
 from app.services import sql
 from app.services.files import EXPORTS
-import os, csv
+from datetime import datetime, timedelta
+from app.services.weather import history_hourly, forecast_hourly
 
 
 def sql_demo_rows():
@@ -44,3 +47,112 @@ def export_preview_csv(table: str, rows: list):
         for r in rows:
             w.writerow(r)
     return path
+
+
+
+
+def get_signal_hierarchy():
+    """
+    Estructura: {EQUIP_GRP: {EQUIPMENT: [ID, ...], ...}, ...}
+    Usa ANALOG_NUEVA_KEY; si no existe, intenta ANALOG_KEY.
+    """
+    from collections import defaultdict
+    estructura = defaultdict(lambda: defaultdict(list))
+    for table in ("ANALOG_NUEVA_KEY", "ANALOG_KEY"):
+        try:
+            rows = sql.query_list(f"SELECT EQUIP_GRP, EQUIPMENT, ID FROM {table} WHERE ID IS NOT NULL ORDER BY EQUIP_GRP, EQUIPMENT, ID")
+            if rows:
+                for r in rows:
+                    estructura[r["EQUIP_GRP"]][r["EQUIPMENT"]].append(r["ID"])
+                return estructura
+        except Exception:
+            continue
+    return estructura  # vacío si falló
+
+def get_coords_para_equipo(grupo, equipo):
+    """
+    Lee coords desde CSV (COORDS_CSV) con columnas: EQUIP_GRP, EQUIPMENT, LAT, LON
+    """
+    path = os.getenv("COORDS_CSV", "instance/equipos_coords.csv")
+    if not os.path.exists(path):
+        return None, None
+    df = pd.read_csv(path, dtype=str).fillna("")
+    m = df[(df["EQUIP_GRP"] == grupo) & ((df["EQUIPMENT"] == equipo) | (df["EQUIPMENT"] == ""))]
+    if m.empty:
+        return None, None
+    try:
+        return float(m.iloc[0]["LAT"]), float(m.iloc[0]["LON"])
+    except Exception:
+        return None, None
+
+def fetch_sql_series(equip_grp, equipment, signal_id, start_dt, end_dt):
+    """
+    Usa la consulta de .env (SQL_ANALOG_QUERY). Retorna DataFrame con
+    columnas: TIME_FULL (datetime), VALUE (float), OLD (int), BAD (int)
+    """
+    q = os.getenv("SQL_ANALOG_QUERY", "").strip()
+    if not q:
+        raise RuntimeError("Falta SQL_ANALOG_QUERY en .env")
+
+    ts = start_dt.replace(minute=0, second=0, microsecond=0)
+    te = end_dt.replace(minute=0, second=0, microsecond=0)
+    params = [equip_grp, equipment, signal_id, ts, te]
+    rows = sql.query_list(q, params=params)
+    if not rows:
+        return pd.DataFrame(columns=["TIME_FULL", "VALUE", "OLD", "BAD"])
+
+    df = pd.DataFrame(rows)
+    # Normalización de nombres
+    for c in list(df.columns):
+        if c.lower() == "time":
+            df.rename(columns={c: "TIME_FULL"}, inplace=True)
+    df["TIME_FULL"] = pd.to_datetime(df["TIME_FULL"])
+    df["VALUE"] = pd.to_numeric(df["VALUE"], errors="coerce")
+    for c in ("OLD","BAD"):
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0).astype(int)
+        else:
+            df[c] = 0
+    return df.sort_values("TIME_FULL")
+
+def fetch_weather_history(lat, lon, start_dt, end_dt):
+    """
+    Wrapper a WeatherAPI histórico (por día) -> DataFrame horario con columna 'temperature'.
+    """
+    # history_hourly pide lat/lon y fecha (YYYY-MM-DD) por día
+    curr = start_dt.date()
+    endd = end_dt.date()
+    rows = []
+    while curr <= endd:
+        data = history_hourly(lat, lon, curr.isoformat())
+        # WeatherAPI history.json entrega 'forecast'->'forecastday'[0]->'hour'
+        try:
+            hours = (data.get("forecast", {}).get("forecastday", [])[0]).get("hour", [])
+        except Exception:
+            hours = []
+        for h in hours:
+            # h['time'] es en local time de la ubicación; lo tomamos como naive y lo serializamos ISO
+            t = pd.to_datetime(h.get("time"))
+            rows.append({
+                "time": t,
+                "temperature": h.get("temp_c"),
+                "relative_humidity": h.get("humidity"),
+                "uv": h.get("uv"),
+                "windspeed": h.get("wind_kph"),
+                "winddirection": h.get("wind_degree"),
+            })
+        curr += timedelta(days=1)
+    if not rows:
+        return pd.DataFrame(columns=["time","temperature","relative_humidity","uv","windspeed","winddirection"])
+    dfw = pd.DataFrame(rows)
+    # Redondeamos a hora exacta para merge
+    dfw["time"] = pd.to_datetime(dfw["time"]).dt.floor("H")
+    # Si hay duplicados por hora, nos quedamos con el último
+    dfw = dfw.drop_duplicates(subset=["time"], keep="last")
+    return dfw.sort_values("time")
+
+def make_trend_payload(df_sql):
+    # D3: [{"Time": ISO, "VALUE": v}, ...]
+    tmp = df_sql.dropna(subset=["TIME_FULL","VALUE"])[["TIME_FULL","VALUE"]].copy()
+    tmp["Time"] = pd.to_datetime(tmp["TIME_FULL"]).dt.strftime("%Y-%m-%dT%H:%M:%S")
+    return tmp[["Time","VALUE"]].to_dict(orient="records")
