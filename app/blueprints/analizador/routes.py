@@ -359,3 +359,50 @@ def exportar_csv():
 
     bio = BytesIO(sio.getvalue().encode("utf-8-sig"))
     return send_file(bio, as_attachment=True, download_name=fname, mimetype="text/csv; charset=utf-8")
+
+@bp.route("/entrenar_lstm", methods=["POST"])
+@login_required
+def entrenar_lstm():
+    from app.services.lstm import train_or_update
+    equip_grp = request.form.get("equip_grp","").strip()
+    equipment = request.form.get("equipment","").strip()
+    signal_id = request.form.get("signal_id","").strip()
+    fecha_ini = _parse_dt(request.form.get("fecha_ini"), datetime.now() - timedelta(days=30))
+    fecha_fin = _parse_dt(request.form.get("fecha_fin"), datetime.now())
+
+    try:
+        info = train_or_update(equip_grp, equipment, signal_id, fecha_ini, fecha_fin, lookback=24, epochs=8)
+        if info.get("trained"):
+            backend = info.get('backend','lstm')
+            nombre = 'LSTM' if backend=='lstm' else 'MLP (fallback)'
+            flash(f"✅ {nombre} entrenada ({info.get('samples')} muestras). Última hora: {info.get('last_ts')}", "success")
+        else:
+            flash(f"⚠️ No se pudo entrenar: {info.get('reason','')}", "warning")
+    except Exception as e:
+        flash(f"❌ Error entrenando LSTM: {e}", "danger")
+
+    return redirect(url_for("analizador.index"))
+
+
+@bp.route("/proyectar_lstm", methods=["POST"])
+@login_required
+def proyectar_lstm():
+    from app.services.lstm import forecast_next_hours
+    equip_grp = request.form.get("equip_grp","").strip()
+    equipment = request.form.get("equipment","").strip()
+    signal_id = request.form.get("signal_id","").strip()
+    pasos = int(request.form.get("pasos", "24") or 24)
+
+    try:
+        df_pred = forecast_next_hours(equip_grp, equipment, signal_id, steps=pasos)
+        # Armar datos para Chart.js
+        labels = [ts.strftime("%Y-%m-%d %H:%M") for ts in df_pred["TIME_FULL"]]
+        values = [float(v) for v in df_pred["FORECAST_VALUE"]]
+        return render_template("analizador/proyeccion_lstm.html",
+            equip_grp=equip_grp, equipment=equipment, signal_id=signal_id,
+            labels=json.dumps(labels), values=json.dumps(values),
+            tabla=df_pred.to_html(classes="table table-striped table-sm", index=False)
+        )
+    except Exception as e:
+        flash(f"❌ Error en proyección LSTM: {e}", "danger")
+        return redirect(url_for("analizador.index"))

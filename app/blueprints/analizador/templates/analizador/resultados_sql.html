@@ -93,10 +93,33 @@
                     </div>
                     {% endif %}
                     <div class="d-grid">
-                        <form method="post" action="/exportar_xlsx" id="exportForm">
+                        <form method="post" action="{{ url_for('analizador.exportar_csv') }}" id="exportForm">
                             <input type="hidden" name="data" id="data_xlsx"><input type="hidden" name="export_token" value="superclave"><input type="hidden" name="equip_grp" value="{{ equip_grp }}"><input type="hidden" name="equipment" value="{{ equipment }}"><input type="hidden" name="signal_id" value="{{ signal_id }}">
                             <button type="submit" class="btn btn-primary w-100"><span class="material-symbols-outlined align-middle">download</span> Exportar a Excel</button>
                         </form>
+
+                    <div class="row g-2 mt-2">
+                        <div class="col-md-6 d-grid">
+                            <form method="post" action="{{ url_for('analizador.entrenar_lstm') }}">
+                                <input type="hidden" name="equip_grp" value="{{ equip_grp }}">
+                                <input type="hidden" name="equipment" value="{{ equipment }}">
+                                <input type="hidden" name="signal_id" value="{{ signal_id }}">
+                                <input type="hidden" name="fecha_ini" value="{{ fecha_ini }}">
+                                <input type="hidden" name="fecha_fin" value="{{ fecha_fin }}">
+                                <button type="submit" class="btn btn-outline-primary">Entrenar LSTM (30 días)</button>
+                            </form>
+                        </div>
+                        <div class="col-md-6 d-grid">
+                            <form method="post" action="{{ url_for('analizador.proyectar_lstm') }}">
+                                <input type="hidden" name="equip_grp" value="{{ equip_grp }}">
+                                <input type="hidden" name="equipment" value="{{ equipment }}">
+                                <input type="hidden" name="signal_id" value="{{ signal_id }}">
+                                <input type="hidden" name="pasos" value="24">
+                                <button type="submit" class="btn btn-outline-success">Proyectar 24 h (LSTM)</button>
+                            </form>
+                        </div>
+                    </div>
+    
                     </div>
                 </div>
             </div>

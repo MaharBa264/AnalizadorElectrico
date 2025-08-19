@@ -16,3 +16,6 @@ matplotlib==3.3.4
 requests==2.27.1
 
 XlsxWriter==3.0.3
+
+scikit-learn==0.24.2
+# Usa CPU; compatible Py3.6 (puede requerir AVX)
