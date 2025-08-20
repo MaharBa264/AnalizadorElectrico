@@ -57,4 +57,10 @@ def create_app(config_object=None):
     from .blueprints.geo import bp as geo_bp
     app.register_blueprint(geo_bp, url_prefix="/geo")
 
+    from app.blueprints.power.routes import bp as power_bp
+    app.register_blueprint(power_bp)
+
+    from app.blueprints.protections.routes import bp as protections_bp
+    app.register_blueprint(protections_bp)
+
     return app

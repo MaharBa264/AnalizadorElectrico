@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+{% block title %}Curvas IDMT (IEC 60255){% endblock %}
+{% block extra_head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/brand-edesal.css') }}">
+{% endblock %}
+{% block content %}
+<h2 class="mb-3">Curvas IDMT (IEC 60255)</h2>
+<div class="row g-3">
+  <div class="col-lg-4">
+    <div class="card p-3">
+      <div class="mb-2"><label class="form-label">I<sub>fault</sub> [A]</label><input type="number" class="form-control" id="I_fault" value="2500"></div>
+      <div class="mb-2"><label class="form-label">I<sub>s</sub> (pickup) [A]</label><input type="number" class="form-control" id="Is" value="200"></div>
+      <div class="mb-2"><label class="form-label">TMS</label><input type="text" class="form-control" id="TMS" value="0,1"></div>
+      <div class="mb-2"><label class="form-label">Curva</label>
+        <select class="form-select" id="curve">
+          <option value="standard">Standard Inverse</option>
+          <option value="very">Very Inverse</option>
+          <option value="extremely">Extremely Inverse</option>
+          <option value="long">Long Time</option>
+        </select></div>
+      <hr>
+      <div class="mb-2 d-flex gap-2">
+        <button class="btn btn-primary flex-fill" id="btn-calcular">Calcular</button>
+        <button class="btn btn-outline-primary flex-fill" id="btn-sugerir">Sugerir desde SQL</button>
+      </div>
+      <small class="text-muted">Fórmula IEC 60255: t(I)=TMS·k / ((I/Is)^α − 1)</small>
+    </div>
+  </div>
+  <div class="col-lg-8">
+    <div class="card p-3">
+      <canvas id="chart"></canvas>
+      <div class="small text-muted mt-2">Curva 1: parámetros de la izquierda. Curva 2 (sugerida) en trazo punteado.</div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal sugerencias -->
+<div class="modal" tabindex="-1" id="modal-sug" style="display:none; background:rgba(0,0,0,.4); position:fixed; inset:0; align-items:center; justify-content:center;">
+  <div class="card p-3" style="width: min(900px, 95vw); max-height: 85vh; overflow:auto;">
+    <div class="d-flex justify-content-between align-items-center mb-2">
+      <h5 class="mb-0">Sugerir parámetros desde SQL + KML</h5>
+      <button class="btn btn-sm btn-outline-secondary" id="close-sug">Cerrar</button>
+    </div>
+    <div class="row g-2">
+      <div class="col-md-3"><label class="form-label">V [kV]</label><input type="number" id="s_V" class="form-control" value="13.2" step="0.1"></div>
+      <div class="col-md-3"><label class="form-label">pf</label><input type="number" id="s_pf" class="form-control" value="0.95" step="0.01"></div>
+      <div class="col-md-3"><label class="form-label">Is factor</label><input type="number" id="s_isf" class="form-control" value="1.2" step="0.05"></div>
+      <div class="col-md-3"><label class="form-label">t_target [s] a 50% línea</label><input type="number" id="s_t" class="form-control" value="0.4" step="0.05"></div>
+      <div class="col-md-6"><label class="form-label">Tag (EQUIP_GRP|EQUIPMENT|ID)</label><input class="form-control" id="s_tag" placeholder="L13|ALIM_5|12345"></div>
+      <div class="col-md-2"><label class="form-label">scale</label><input class="form-control" id="s_scale" value="0.001"></div>
+      <div class="col-md-4"><label class="form-label">Curva</label>
+        <select id="s_curve" class="form-select">
+          <option value="standard">Standard Inverse</option>
+          <option value="very">Very Inverse</option>
+          <option value="extremely">Extremely Inverse</option>
+          <option value="long">Long Time</option>
+        </select>
+      </div>
+      <div class="col-md-6"><label class="form-label">KML (ruta servidor)</label><input class="form-control" id="s_kml" placeholder="static/geodata/L13.kml"></div>
+      <div class="col-md-6"><label class="form-label">Nombre línea en KML</label><input class="form-control" id="s_linename" placeholder="ALIM_5"></div>
+    </div>
+    <div class="d-flex gap-2 mt-3">
+      <button class="btn btn-primary" id="do-sugerir">Calcular</button>
+    </div>
+    <pre id="s_out" class="small mt-2"></pre>
+  </div>
+</div>
+{% endblock %}
+{% block extra_scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>window.Chart || document.write('<script src="{{ url_for("static", filename="js/vendor/chart.umd.min.js") }}"><\\/script>')</script>
+<script>
+(function(){
+  if(!window.Chart){ alert("No se pudo cargar Chart.js"); return; }
+  function num(v){ return parseFloat(String(v).replace(',','.')); }
+
+  const ctx = document.getElementById('chart').getContext('2d');
+  let chart = new Chart(ctx, { 
+    type:'line', 
+    data:{ labels:[], datasets:[
+      {label:'t (s) curva 1', data:[], fill:false},
+      {label:'t (s) curva 2 (sugerida)', data:[], fill:false, borderDash:[6,6]}
+    ]},
+    options:{ responsive:true, scales:{ 
+      x:{ type:'linear', title:{display:true, text:'I/Is'} }, 
+      y:{ type:'logarithmic', title:{display:true, text:'t [s]'} } 
+    }}
+  });
+
+  async function serie(Is, TMS, curve){
+    const xs = []; for(let m=1.05; m<=20; m+=0.1) xs.push(m);
+    const ys = xs.map(m => {
+      const I = m*Is;
+      const body = { I_fault: I, Is: Is, TMS: TMS, curve: curve };
+      return fetch("{{ url_for('protections.idmt_calc') }}", { method:"POST", headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) })
+             .then(r=>r.json()).then(d=>d.t_trip_s);
+    });
+    return {xs, ys: await Promise.all(ys)};
+  }
+
+  async function draw(){
+    const Is = num(document.getElementById('Is').value);
+    const TMS = num(document.getElementById('TMS').value);
+    const curve = document.getElementById('curve').value;
+    const s1 = await serie(Is, TMS, curve);
+    chart.data.labels = s1.xs;
+    chart.data.datasets[0].data = s1.ys;
+    chart.update();
+  }
+  document.getElementById('btn-calcular').onclick = draw;
+
+  // --- Sugerencias desde SQL + KML ---
+  const modal = document.getElementById('modal-sug');
+  document.getElementById('btn-sugerir').onclick = ()=>{ modal.style.display='flex'; };
+  document.getElementById('close-sug').onclick = ()=>{ modal.style.display='none'; };
+
+  document.getElementById('do-sugerir').onclick = async ()=>{
+    const tag = document.getElementById('s_tag').value.trim();
+    const parts = tag.split('|');
+    if(parts.length!==3){ alert('Tag inválido'); return; }
+    const body = {
+      V_kV: num(document.getElementById('s_V').value),
+      pf: num(document.getElementById('s_pf').value),
+      is_factor: num(document.getElementById('s_isf').value),
+      curve: document.getElementById('s_curve').value,
+      t_target: num(document.getElementById('s_t').value),
+      tag: { equip_grp: parts[0], equipment: parts[1], signal_id: parseInt(parts[2]), scale: num(document.getElementById('s_scale').value) },
+      line: { kml_file: document.getElementById('s_kml').value.trim(), name: document.getElementById('s_linename').value.trim() }
+    };
+    const r = await fetch("{{ url_for('protections.sugerencias') }}", { method:"POST", headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    const data = await r.json();
+    document.getElementById('s_out').textContent = JSON.stringify(data, null, 2);
+    if(data.ok){
+      const s2 = await serie(data.Is_A, data.TMS, document.getElementById('curve').value);
+      chart.data.labels = s2.xs;
+      chart.data.datasets[1].data = s2.ys;
+      chart.update();
+      if(confirm('¿Copiar Is/TMS sugeridos a la curva 1?')){
+        document.getElementById('Is').value = Math.round(data.Is_A);
+        document.getElementById('TMS').value = data.TMS.toFixed(2).replace('.',',');
+        draw();
+      }
+    }
+  };
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,248 @@
+{% extends "base.html" %}
+{% block title %}Unifilar PyPSA{% endblock %}
+{% block extra_head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/brand-edesal.css') }}">
+<style>
+#cy{ height: 540px; background:#fff; border-radius:1rem; }
+.legend span{ display:inline-block; width:14px; height:14px; border-radius:3px; margin-right:6px; vertical-align:middle; }
+.legend .ok{ background:#2bb673; } .legend .warn{ background:#ff9800; } .legend .crit{ background:#e53935; }
+.side{ position:sticky; top:1rem; }
+.small-mono{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size:12px; }
+
+/* 👇 agregado para los combos */
+.select-row{ display:flex; gap:.5rem; flex-wrap:wrap; }
+.select-row select{ min-width: 140px; }
+.badge-probe{ font-size: 12px; padding: 2px 6px; border-radius: 6px; background:#eef; }
+</style>
+
+{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h2 class="mb-0">Unifilar de Subestación</h2>
+  <div class="d-flex gap-2">
+    <button class="btn btn-outline-secondary btn-sm" id="btn-asignar">Asociar tags</button>
+    <button class="btn btn-outline-primary btn-sm" id="btn-ejemplo">Cargar ejemplo</button>
+    <button class="btn btn-primary btn-sm" id="btn-calcular">Calcular flujo</button>
+  </div>
+</div>
+<div class="row g-4">
+  <div class="col-lg-4">
+    <div class="card p-3 side">
+      <h6 class="mb-2">Configuración (JSON)</h6>
+      <textarea id="cfg" class="form-control" rows="18" spellcheck="false" placeholder='{"buses":[...], "lines":[...], "loads":[...], "generators":[...]}'></textarea>
+      <div class="d-flex gap-2 mt-2">
+        <button class="btn btn-sm btn-outline-secondary" id="btn-down-map">Descargar mapeo</button>
+        <label class="btn btn-sm btn-outline-secondary mb-0">
+          Cargar mapeo <input type="file" id="up-map" accept=".json" hidden>
+        </label>
+      </div>
+      <small class="text-muted">Define elementos. Usa "sources" para asociar tags SQL a p_mw, q_mvar, v_set_pu.</small>
+    </div>
+  </div>
+  <div class="col-lg-8">
+    <div class="card p-3 mb-3">
+      <div id="cy"></div>
+    </div>
+    <div class="card p-3">
+      <div class="d-flex align-items-center gap-3 legend">
+        <div><span class="ok"></span><small>&lt;= 60% Snom</small></div>
+        <div><span class="warn"></span><small>60–90% Snom</small></div>
+        <div><span class="crit"></span><small>&gt; 90% Snom</small></div>
+      </div>
+      <pre id="out" class="small small-mono mb-0 mt-2"></pre>
+    </div>
+  </div>
+</div>
+
+<!-- Panel de asociación -->
+<div class="modal" tabindex="-1" id="modal-map" style="display:none; background:rgba(0,0,0,.4); position:fixed; inset:0; align-items:center; justify-content:center;">
+  <div class="card p-3" style="width: min(900px, 95vw); max-height: 85vh; overflow:auto;">
+    <div class="d-flex justify-content-between align-items-center mb-2">
+      <h5 class="mb-0">Asociar tags SQL</h5>
+      <button class="btn btn-sm btn-outline-secondary" id="close-map">Cerrar</button>
+    </div>
+    <div id="map-form" class="small"></div>
+  </div>
+</div>
+{% endblock %}
+{% block extra_scripts %}
+<script src="https://unpkg.com/cytoscape@3.28.1/dist/cytoscape.min.js"></script>
+<script>window.cytoscape || document.write('<script src="{{ url_for("static", filename="js/vendor/cytoscape.min.js") }}"><\\/script>')</script>
+<script>
+(function(){
+  if(!window.cytoscape){ alert("No se pudo cargar Cytoscape."); return; }
+  const cy = cytoscape({ 
+    container: document.getElementById('cy'), 
+    layout: { name: 'grid' }, 
+    style: [
+      { selector: 'node', style: { 'background-color': '#2aaae2', 'label': 'data(label)', 'text-valign':'center', 'color':'#fff', 'font-weight':700 } },
+      { selector: 'edge', style: { 'width': 3, 'line-color': '#0c3a6d', 'curve-style': 'straight', 'target-arrow-shape':'triangle', 'target-arrow-color':'#0c3a6d' } },
+      { selector: 'edge[severity = "warn"]', style: { 'line-color': '#ff9800', 'target-arrow-color':'#ff9800', 'width': 5 } },
+      { selector: 'edge[severity = "crit"]', style: { 'line-color': '#e53935', 'target-arrow-color':'#e53935', 'width': 7 } }
+    ]
+  });
+
+  async function calcular(cfg){
+    const r = await fetch("{{ url_for('power.unifilar_build') }}", { method:"POST", headers:{'Content-Type':'application/json'}, body: JSON.stringify(cfg) });
+    const data = await r.json();
+    const out = document.getElementById('out');
+    if(!data.ok){ out.textContent = "Error: " + (data.error || ""); return; }
+    cy.elements().remove();
+    cy.add(data.graph.nodes);
+    cy.add(data.graph.edges);
+    cy.layout({ name: 'breadthfirst', directed: true, spacingFactor: 1.2 }).run();
+    out.textContent = JSON.stringify(data.results, null, 2);
+  }
+
+  document.getElementById('btn-calcular').onclick = ()=>{
+    let cfg = {};
+    try{ cfg = JSON.parse(document.getElementById('cfg').value); }catch(e){ alert("JSON inválido"); return; }
+    calcular(cfg);
+  };
+
+  document.getElementById('btn-ejemplo').onclick = ()=>{
+    const ejemplo = {
+      "buses":[{"name":"SE_33kV","v_nom":33.0},{"name":"ALIM_1","v_nom":33.0}],
+      "lines":[{"name":"L1","bus0":"SE_33kV","bus1":"ALIM_1","x_pu":0.12,"r_pu":0.015,"s_nom":20.0}],
+      "loads":[{"name":"Carga_1","bus":"ALIM_1","p_mw":2.3,"q_mvar":0.6}],
+      "generators":[{"name":"SE33_SG","bus":"SE_33kV","control":"Slack","v_set_pu":1.0,"p_max_mw":50.0}]
+    };
+    document.getElementById('cfg').value = JSON.stringify(ejemplo, null, 2);
+  };
+
+  //-------------- Asociación de tags (con combos SQL) ---------------
+  async function fetchJSON(url){ const r = await fetch(url); return r.json(); }
+  async function getGroups(){ return (await fetchJSON("{{ url_for('power.tag_groups') }}")).groups || []; }
+  async function getEquipment(grp){ return (await fetchJSON(`{{ url_for('power.tag_equipment') }}?grp=${encodeURIComponent(grp)}`)).equipment || []; }
+  async function getIds(grp, eq){ return (await fetchJSON(`{{ url_for('power.tag_ids') }}?grp=${encodeURIComponent(grp)}&equipment=${encodeURIComponent(eq)}`)).ids || []; }
+  async function probeTag(grp, eq, id, scale){
+    const r = await fetch("{{ url_for('power.probe_tag') }}", {
+      method:"POST", headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({equip_grp:grp, equipment:eq, signal_id:id, scale:scale||1})
+    });
+    return r.json();
+  }
+
+  function makeSelectorRow(prefix, label, defaultScale){
+    const row = document.createElement('div');
+    row.className = 'select-row align-items-end';
+    row.innerHTML = `
+      <div><label class="form-label small mb-1">${label} — Grupo</label><br><select class="form-select form-select-sm ${prefix}_grp"></select></div>
+      <div><label class="form-label small mb-1">Equipo</label><br><select class="form-select form-select-sm ${prefix}_eq"></select></div>
+      <div><label class="form-label small mb-1">ID</label><br><select class="form-select form-select-sm ${prefix}_id"></select></div>
+      <div style="width:90px"><label class="form-label small mb-1">scale</label><input class="form-control form-control-sm ${prefix}_scale" value="${defaultScale}"></div>
+      <div><button class="btn btn-sm btn-outline-secondary ${prefix}_probe" type="button">Probar</button><span class="ms-2 badge-probe ${prefix}_out"></span></div>
+    `;
+    return row;
+  }
+
+  async function populateSelector(row){
+    const grpSel = row.querySelector('[class$="_grp"]');
+    const eqSel  = row.querySelector('[class$="_eq"]');
+    const idSel  = row.querySelector('[class$="_id"]');
+    const scale  = row.querySelector('[class$="_scale"]');
+    const probe  = row.querySelector('[class$="_probe"]');
+    const outLbl = row.querySelector('[class$="_out"]');
+
+    const groups = await getGroups();
+    grpSel.innerHTML = groups.map(g=>`<option>${g}</option>`).join('');
+
+    async function updateEq(){
+      const eqs = await getEquipment(grpSel.value);
+      eqSel.innerHTML = eqs.map(e=>`<option>${e}</option>`).join('');
+      updateId();
+    }
+    async function updateId(){
+      const ids = await getIds(grpSel.value, eqSel.value);
+      idSel.innerHTML = ids.map(id=>`<option>${id}</option>`).join('');
+    }
+    grpSel.onchange = updateEq; eqSel.onchange = updateId;
+    await updateEq();
+
+    probe.onclick = async ()=>{
+      const idVal = idSel.value;
+      const idParsed = /^\d+$/.test(idVal) ? parseInt(idVal) : idVal;
+      const data = await probeTag(grpSel.value, eqSel.value, idParsed, parseFloat(scale.value||'1'));
+      outLbl.textContent = data.ok ? data.value.toFixed(3) : 'sin datos';
+    };
+
+    // devuelve un getter para leer la selección
+    return ()=>({
+      grp: grpSel.value,
+      eq:  eqSel.value,
+      id:  (/^\d+$/.test(idSel.value)? parseInt(idSel.value) : idSel.value),
+      scale: parseFloat(scale.value||'1')
+    });
+  }
+
+  function buildMapForm(){
+    const form = document.getElementById('map-form');
+    form.innerHTML = '';
+    let cfg = {};
+    try{ cfg = JSON.parse(document.getElementById('cfg').value); } catch(e){ cfg = {}; }
+    const loads = cfg.loads || [];
+    const gens  = cfg.generators || [];
+    const getters = []; // funciones para aplicar al JSON
+
+    function section(title){ const h = document.createElement('h6'); h.textContent = title; h.className='mt-2'; form.appendChild(h); }
+
+    // --- Cargas
+    section('Cargas');
+    if(loads.length===0){ form.appendChild(document.createTextNode('No hay cargas.')); }
+    loads.forEach((ld,i)=>{
+      const box = document.createElement('div');
+      box.className='border rounded p-2 mb-2';
+      box.innerHTML = `<div class="fw-bold">${ld.name} <small class="text-muted">(${ld.bus})</small></div>`;
+      const rP = makeSelectorRow(`ld${i}_p`, 'p_mw', '0.001');
+      const rQ = makeSelectorRow(`ld${i}_q`, 'q_mvar', '0.001');
+      box.appendChild(rP); box.appendChild(rQ);
+      form.appendChild(box);
+      Promise.all([populateSelector(rP), populateSelector(rQ)]).then(([getP, getQ])=>{
+        getters.push(()=>({type:'load', idx:i, P:getP(), Q:getQ()}));
+      });
+    });
+
+    // --- Generadores
+    section('Generadores');
+    if(gens.length===0){ form.appendChild(document.createTextNode('No hay generadores.')); }
+    gens.forEach((g,i)=>{
+      const box = document.createElement('div');
+      box.className='border rounded p-2 mb-2';
+      box.innerHTML = `<div class="fw-bold">${g.name} <small class="text-muted">(${g.bus})</small></div>`;
+      const rP = makeSelectorRow(`g${i}_p`, 'p_set_mw', '0.001');
+      const rV = makeSelectorRow(`g${i}_v`, 'v_set_pu', '0.01');
+      box.appendChild(rP); box.appendChild(rV);
+      form.appendChild(box);
+      Promise.all([populateSelector(rP), populateSelector(rV)]).then(([getP, getV])=>{
+        getters.push(()=>({type:'gen', idx:i, P:getP(), V:getV()}));
+      });
+    });
+
+    const btns = document.createElement('div');
+    btns.className='d-flex gap-2 mt-2';
+    btns.innerHTML = `<button class="btn btn-primary btn-sm" id="apply-map" type="button">Aplicar al JSON</button>`;
+    form.appendChild(btns);
+
+    document.getElementById('apply-map').onclick = ()=>{
+      try{ cfg = JSON.parse(document.getElementById('cfg').value); } catch(e){ alert('JSON inválido'); return; }
+      getters.forEach(gf=>{
+        const d = gf();
+        if(d.type==='load'){
+          const ld = cfg.loads[d.idx]; ld.sources = ld.sources || {};
+          ld.sources.p_mw   = {"equip_grp":d.P.grp,"equipment":d.P.eq,"signal_id":d.P.id,"scale":d.P.scale};
+          ld.sources.q_mvar = {"equip_grp":d.Q.grp,"equipment":d.Q.eq,"signal_id":d.Q.id,"scale":d.Q.scale};
+        }else{
+          const g = cfg.generators[d.idx]; g.sources = g.sources || {};
+          g.sources.p_set_mw = {"equip_grp":d.P.grp,"equipment":d.P.eq,"signal_id":d.P.id,"scale":d.P.scale};
+          g.sources.v_set_pu = {"equip_grp":d.V.grp,"equipment":d.V.eq,"signal_id":d.V.id,"scale":d.V.scale};
+        }
+      });
+      document.getElementById('cfg').value = JSON.stringify(cfg, null, 2);
+      alert('Mapeo aplicado al JSON.');
+      document.getElementById('modal-map').style.display='none';
+    };
+  };
+
+})();
+</script>
+{% endblock %}

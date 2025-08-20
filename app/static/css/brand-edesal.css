@@ -1,0 +1,17 @@
+:root{
+  --brand-primary:#0c3a6d; /* ajustar con el exacto de EDESAL */
+  --brand-accent:#2aaae2;  /* celeste/acento */
+  --brand-success:#2bb673; /* verde acento */
+  --brand-dark:#0d223c;
+  --brand-light:#f4f7fb;
+}
+
+body{ background:var(--brand-light); color:#0f2033; }
+.navbar{ background:var(--brand-primary)!important; }
+.navbar .nav-link, .navbar-brand{ color:#fff!important; }
+.btn-primary{ background:var(--brand-primary); border-color:var(--brand-primary); }
+.btn-outline-primary{ color:var(--brand-primary); border-color:var(--brand-primary); }
+.card{ border:0; box-shadow:0 6px 16px rgba(0,0,0,.08); border-radius:1rem; }
+.badge-brand{ background:var(--brand-accent); }
+.link-brand{ color:var(--brand-primary); }
+a{ text-decoration:none; }
