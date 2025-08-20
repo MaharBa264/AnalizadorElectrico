@@ -6,7 +6,7 @@ from flask import render_template, request, redirect, url_for, flash, send_file
 from flask_login import login_required
 from app.services.weather import forecast_hourly
 from . import bp
-from .services import get_signal_hierarchy, get_coords_para_equipo, fetch_sql_series, fetch_weather_history, make_trend_payload, fetch_weather_history_influx
+from .services import get_signal_hierarchy, get_coords_para_equipo, fetch_sql_series, make_trend_payload, fetch_weather_history_influx
 from .compare import comparar_corriente_vs_temp, graficar_corriente_vs_temp
 from io import StringIO, BytesIO
 
@@ -100,17 +100,13 @@ def analizar_sql():
     else:
         station_info = {"latitud": lat, "longitud": lon}
 
-    # Histórico horario de clima → primero Influx, si no hay datos intentamos WeatherAPI (fallback)
+    # Histórico horario de clima → SOLO Influx
     dfw = fetch_weather_history_influx(equip_grp, fecha_ini, fecha_fin)
-    if dfw.empty:
-        try:
-            dfw = fetch_weather_history(lat, lon, fecha_ini, fecha_fin)
-        except Exception:
-            dfw = pd.DataFrame(columns=["time","temperature","relative_humidity","windspeed","winddirection"])
-
-    # Garantiza datetime (por si el driver devolvió strings/objeto)
-    if not pd.api.types.is_datetime64_any_dtype(df_sql["TIME_FULL"]):
-        df_sql["TIME_FULL"] = pd.to_datetime(df_sql["TIME_FULL"], errors="coerce", infer_datetime_format=True)
+    if dfw is None or dfw.empty:
+        dfw = pd.DataFrame(columns=["time","temperature","relative_humidity","windspeed","winddirection"])
+        # Garantiza datetime (por si el driver devolvió strings/objeto)
+        if not pd.api.types.is_datetime64_any_dtype(df_sql["TIME_FULL"]):
+            df_sql["TIME_FULL"] = pd.to_datetime(df_sql["TIME_FULL"], errors="coerce", infer_datetime_format=True)
 
     # Promedio horario de corriente y merge por hora
     sql_hour = (
@@ -120,6 +116,17 @@ def analizar_sql():
         .groupby("TIME_H", as_index=False)
         .agg(VALUE=("VALUE","mean"))
     )
+    def _to_local_naive(s, local_tz="America/Argentina/San_Luis"):
+        s = pd.to_datetime(s, errors="coerce")
+        # Si viene con tz, convertir a local y quitar tz
+        tz = getattr(s.dt, "tz", None)
+        if tz is not None:
+            s = s.dt.tz_convert(local_tz).dt.tz_localize(None)
+        # Si ya era naive, lo dejamos tal cual
+        return s.dt.floor("H")
+
+    sql_hour["TIME_H"] = _to_local_naive(sql_hour["TIME_H"])
+    dfw["time"]       = _to_local_naive(dfw["time"])
     merged = sql_hour.merge(dfw, left_on="TIME_H", right_on="time", how="left")
     merged.rename(columns={"TIME_H":"time"}, inplace=True)
 
@@ -193,7 +200,7 @@ def analizar_sql():
             except Exception as e:
                 forecast_debug = "Error al pedir pronóstico a WeatherAPI: {}".format(e)
     # Fuente del histórico usada: Influx si trajo algo; si no, WeatherAPI; si ninguna, 'N/A'
-    hist_source = "Influx" if not dfw.empty else ("WeatherAPI" if "dfw" in locals() and isinstance(dfw, pd.DataFrame) else "N/A")
+    hist_source = "Influx" if not dfw.empty else "N/A"
 
     # LOG para depurar rápido
     from flask import current_app
@@ -261,12 +268,24 @@ def exportar_xlsx():
     # Comparación con clima (opcional)
     merged_out = None
     if comparar_chk:
-        lat, lon = get_coords_para_equipo(equip_grp, equipment)
-        if lat is not None and lon is not None:
-            dfw = fetch_weather_history(lat, lon, fecha_ini, fecha_fin)
+        dfw = fetch_weather_history_influx(equip_grp, fecha_ini, fecha_fin)
+        if dfw is None or dfw.empty:
+            dfw = pd.DataFrame(columns=["time","temperature","relative_humidity","windspeed","winddirection"])
+        if not df_sql.empty:
             sql_hour = (df_sql.dropna(subset=["VALUE"])
                         .assign(TIME_H=df_sql["TIME_FULL"].dt.floor("H"))
                         .groupby("TIME_H", as_index=False).agg(VALUE=("VALUE","mean")))
+            def _to_local_naive(s, local_tz="America/Argentina/San_Luis"):
+                s = pd.to_datetime(s, errors="coerce")
+                # Si viene con tz, convertir a local y quitar tz
+                tz = getattr(s.dt, "tz", None)
+                if tz is not None:
+                    s = s.dt.tz_convert(local_tz).dt.tz_localize(None)
+                # Si ya era naive, lo dejamos tal cual
+                return s.dt.floor("H")
+
+            sql_hour["TIME_H"] = _to_local_naive(sql_hour["TIME_H"])
+            dfw["time"]       = _to_local_naive(dfw["time"])
             merged = sql_hour.merge(dfw, left_on="TIME_H", right_on="time", how="left")
             merged.rename(columns={"TIME_H":"time"}, inplace=True)
             merged_out = merged[["time","VALUE","temperature","relative_humidity","windspeed","winddirection"]]
@@ -332,15 +351,24 @@ def exportar_csv():
         lat, lon = get_coords_para_equipo(equip_grp, equipment)
         if lat is not None and lon is not None:
             dfw = fetch_weather_history_influx(equip_grp, fecha_ini, fecha_fin)
-            if dfw.empty:
-                try:
-                    dfw = fetch_weather_history(lat, lon, fecha_ini, fecha_fin)
-                except Exception:
-                    dfw = pd.DataFrame(columns=["time","temperature","relative_humidity","windspeed","winddirection"])
+            if dfw is None or dfw.empty:
+                dfw = pd.DataFrame(columns=["time","temperature","relative_humidity","windspeed","winddirection"])
+
             if not df_sql.empty:
                 sql_hour = (df_sql.dropna(subset=["VALUE"])
                             .assign(TIME_H=lambda x: pd.to_datetime(x["TIME_FULL"], errors="coerce").dt.floor("H"))
                             .groupby("TIME_H", as_index=False).agg(VALUE=("VALUE","mean")))
+                def _to_local_naive(s, local_tz="America/Argentina/San_Luis"):
+                    s = pd.to_datetime(s, errors="coerce")
+                    # Si viene con tz, convertir a local y quitar tz
+                    tz = getattr(s.dt, "tz", None)
+                    if tz is not None:
+                        s = s.dt.tz_convert(local_tz).dt.tz_localize(None)
+                    # Si ya era naive, lo dejamos tal cual
+                    return s.dt.floor("H")
+
+                sql_hour["TIME_H"] = _to_local_naive(sql_hour["TIME_H"])
+                dfw["time"]       = _to_local_naive(dfw["time"])              
                 merged = sql_hour.merge(dfw, left_on="TIME_H", right_on="time", how="left")
                 merged.rename(columns={"TIME_H":"time"}, inplace=True)
                 merged_out = merged[["time","VALUE","temperature","relative_humidity","windspeed","winddirection"]]
@@ -589,3 +617,20 @@ def debug_forecast():
     última: {df['time'].max()}<br>
     columnas: {list(df.columns)}
     """, 200
+
+@bp.route("/analizador/debug_influx_weather")
+@login_required
+def debug_influx_weather():
+    from app.services.influx import query_weather_hourly
+    import pandas as pd
+    equip_grp = request.args.get("equip_grp","").strip()
+    ini = request.args.get("ini") or (datetime.now() - timedelta(days=3)).strftime("%Y-%m-%d 00:00:00")
+    fin = request.args.get("fin") or datetime.now().strftime("%Y-%m-%d %H:00:00")
+    rows = query_weather_hourly(equip_grp, ini, fin)
+    n = len(rows)
+    head = rows[:3]
+    tail = rows[-3:] if n>=3 else rows
+    return (f"equip_grp={equip_grp}<br>"
+            f"rows={n}<br>"
+            f"first={head}<br>"
+            f"last={tail}<br>")

@@ -1,4 +1,7 @@
 {% extends "base.html" %}
+{% macro safe_round(val, nd=2, default='N/A') -%}
+  {{ default if val is none else ('%.' ~ nd ~ 'f')|format(val) }}
+{%- endmacro %}
 {% block title %}Análisis vs. Temperatura{% endblock %}
 
 {% block content %}
@@ -54,7 +57,7 @@
             <div class="card shadow-sm">
                 <div class="card-header"><h5 class="mb-0">Resumen y Pronóstico</h5></div>
                 <div class="card-body">
-                    <p class="card-text text-center"><strong>Coeficiente de correlación: {{ correlation | round(2) }}</strong></p>
+                    <p class="card-text text-center"><strong>Coeficiente de correlación: {{ safe_round(correlation, 2) }}</strong></p>
                     <hr>
                     {% if hist_source %}
                     <p class="text-muted small mb-2">Fuente clima (histórico): <b>{{ hist_source }}</b></p>

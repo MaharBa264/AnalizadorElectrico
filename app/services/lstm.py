@@ -170,47 +170,53 @@ def _prepare_dataset(equip_grp, equipment, signal_id, start_dt, end_dt, lookback
 
 def _get_forecast_df(equip_grp, equipment, steps):
     """
-    Devuelve un DataFrame con columnas:
-      time, temperature, relative_humidity, windspeed, winddirection, hora_sin, hora_cos
-    para las próximas 'steps' horas. Aglutina TODOS los 'forecastday',
-    usa time_epoch si viene, redondea a la hora y se queda sólo con FUTURO.
+    Pronóstico horario para las próximas 'steps' horas desde WeatherAPI.
+    Columnas: time, temperature, relative_humidity, windspeed, winddirection, hora_sin, hora_cos
     """
+    import os, math, requests
     import pandas as pd
     import numpy as np
 
-    if forecast_hourly is None:
+    key = os.getenv("WEATHERAPI_KEY", "").strip()
+    base = os.getenv("WEATHERAPI_BASE", "https://api.weatherapi.com/v1").rstrip("/")
+    if not key:
         return None
 
-    lat, lon = get_coords_para_equipo(equip_grp, equipment)
-    if lat is None or lon is None:
+    # coordenadas del equipo / grupo
+    latlon = get_coords_para_equipo(equip_grp, equipment)
+    if not latlon or latlon[0] is None or latlon[1] is None:
         return None
+    lat, lon = latlon
+
+    # días necesarios según steps (hasta 5 por tu plan)
+    days = int(min(5, max(1, math.ceil(steps / 24.0) + 1)))
 
     try:
-        data = forecast_hourly(lat, lon)
+        r = requests.get(
+            f"{base}/forecast.json",
+            params={"key": key, "q": f"{lat},{lon}", "days": days, "aqi": "no", "alerts": "no"},
+            timeout=(5, 20),
+        )
+        data = r.json()
+        if isinstance(data, dict) and "error" in data:
+            # deja rastro en logs si estás usando logging
+            return None
     except Exception:
         return None
 
-    def to_float(x):
-        try:
-            return float(x)
-        except Exception:
-            return None
-
+    # aplanar horas
     rows = []
     try:
-        days = data.get('forecast', {}).get('forecastday', [])
-        for d in days:
-            for h in d.get('hour', []):
-                if 'time_epoch' in h:
-                    ts = pd.to_datetime(int(h['time_epoch']), unit='s')
-                else:
-                    ts = pd.to_datetime(h.get('time') or h.get('date') or h.get('datetime'))
+        for day in data.get("forecast", {}).get("forecastday", []):
+            for h in day.get("hour", []):
+                ts = (pd.to_datetime(int(h["time_epoch"]), unit="s")
+                      if "time_epoch" in h else pd.to_datetime(h.get("time")))
                 rows.append({
-                    'time': ts,
-                    'temperature': to_float(h.get('temp_c', h.get('temperature'))),
-                    'relative_humidity': to_float(h.get('humidity', h.get('relative_humidity'))),
-                    'windspeed': to_float(h.get('wind_kph', h.get('windspeed'))),
-                    'winddirection': to_float(h.get('wind_degree', h.get('winddirection'))),
+                    "time": ts,
+                    "temperature": _to_float(h.get("temp_c")),
+                    "relative_humidity": _to_float(h.get("humidity")),
+                    "windspeed": _to_float(h.get("wind_kph")),
+                    "winddirection": _to_float(h.get("wind_degree")),
                 })
     except Exception:
         rows = []
@@ -218,22 +224,28 @@ def _get_forecast_df(equip_grp, equipment, steps):
     if not rows:
         return None
 
-    df = pd.DataFrame(rows).dropna(subset=['time'])
-    # Sólo futuro, redondeado a la hora y sin duplicados
-    now = pd.Timestamp.now().floor('H')
-    df = df[df['time'] > now].copy()
+    df = pd.DataFrame(rows).dropna(subset=["time"])
+    now = pd.Timestamp.now().floor("H")
+    df["time"] = pd.to_datetime(df["time"]).dt.floor("H")
+    df = df[df["time"] > now].sort_values("time").drop_duplicates(subset=["time"], keep="first")
+
     if df.empty:
         return None
 
-    df['time'] = pd.to_datetime(df['time']).dt.floor('H')
-    df = df.sort_values('time').drop_duplicates(subset=['time'], keep='first')
-
-    # hora del día para series cíclicas
-    hrs = df['time'].dt.hour.astype(float)
-    df['hora_sin'] = np.sin(2 * np.pi * (hrs / 24.0))
-    df['hora_cos'] = np.cos(2 * np.pi * (hrs / 24.0))
+    # features cíclicas por hora
+    hrs = df["time"].dt.hour.astype(float)
+    df["hora_sin"] = np.sin(2 * np.pi * (hrs / 24.0))
+    df["hora_cos"] = np.cos(2 * np.pi * (hrs / 24.0))
 
     return df.head(steps)
+
+# helper local (pegalo arriba en el archivo si no lo tenés):
+def _to_float(x):
+    try:
+        return float(x)
+    except Exception:
+        return None
+
 
 
 
