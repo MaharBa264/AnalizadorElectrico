@@ -170,10 +170,17 @@ def _prepare_dataset(equip_grp, equipment, signal_id, start_dt, end_dt, lookback
 
 def _get_forecast_df(equip_grp, equipment, steps):
     """
-    Exógenos futuros para próximas 'steps' horas: temp, humedad, viento + hora_sin/cos.
+    Devuelve un DataFrame con columnas:
+      time, temperature, relative_humidity, windspeed, winddirection, hora_sin, hora_cos
+    para las próximas 'steps' horas. Aglutina TODOS los 'forecastday',
+    usa time_epoch si viene, redondea a la hora y se queda sólo con FUTURO.
     """
-    if 'forecast_hourly' not in globals() or forecast_hourly is None:
+    import pandas as pd
+    import numpy as np
+
+    if forecast_hourly is None:
         return None
+
     lat, lon = get_coords_para_equipo(equip_grp, equipment)
     if lat is None or lon is None:
         return None
@@ -183,44 +190,51 @@ def _get_forecast_df(equip_grp, equipment, steps):
     except Exception:
         return None
 
-    hours = []
-    try:
-        hours = (data.get("forecast", {}).get("forecastday", [])[0]).get("hour", [])
-    except Exception:
-        pass
-    if not isinstance(hours, list) or not hours:
-        return None
+    def to_float(x):
+        try:
+            return float(x)
+        except Exception:
+            return None
 
     rows = []
-    now = datetime.now().replace(minute=0, second=0, microsecond=0)
-    def to_float(x):
-        try: return float(x)
-        except: return None
-
-    for h in hours:
-        t = h.get("time") or h.get("date") or h.get("datetime")
-        try:
-            ts = pd.to_datetime(t)
-        except Exception:
-            continue
-        if ts <= now:
-            continue
-        rows.append({
-            "time": ts,
-            "temperature": to_float(h.get("temp_c", h.get("temperature"))),
-            "relative_humidity": to_float(h.get("humidity", h.get("relative_humidity"))),
-            "windspeed": to_float(h.get("wind_kph", h.get("windspeed"))),
-            "winddirection": to_float(h.get("wind_degree", h.get("winddirection"))),
-        })
+    try:
+        days = data.get('forecast', {}).get('forecastday', [])
+        for d in days:
+            for h in d.get('hour', []):
+                if 'time_epoch' in h:
+                    ts = pd.to_datetime(int(h['time_epoch']), unit='s')
+                else:
+                    ts = pd.to_datetime(h.get('time') or h.get('date') or h.get('datetime'))
+                rows.append({
+                    'time': ts,
+                    'temperature': to_float(h.get('temp_c', h.get('temperature'))),
+                    'relative_humidity': to_float(h.get('humidity', h.get('relative_humidity'))),
+                    'windspeed': to_float(h.get('wind_kph', h.get('windspeed'))),
+                    'winddirection': to_float(h.get('wind_degree', h.get('winddirection'))),
+                })
+    except Exception:
+        rows = []
 
     if not rows:
         return None
 
-    df = pd.DataFrame(rows).sort_values("time")
-    hrs = df["time"].dt.hour.astype(float)
-    df["hora_sin"] = np.sin(2*np.pi*(hrs/24.0))
-    df["hora_cos"] = np.cos(2*np.pi*(hrs/24.0))
+    df = pd.DataFrame(rows).dropna(subset=['time'])
+    # Sólo futuro, redondeado a la hora y sin duplicados
+    now = pd.Timestamp.now().floor('H')
+    df = df[df['time'] > now].copy()
+    if df.empty:
+        return None
+
+    df['time'] = pd.to_datetime(df['time']).dt.floor('H')
+    df = df.sort_values('time').drop_duplicates(subset=['time'], keep='first')
+
+    # hora del día para series cíclicas
+    hrs = df['time'].dt.hour.astype(float)
+    df['hora_sin'] = np.sin(2 * np.pi * (hrs / 24.0))
+    df['hora_cos'] = np.cos(2 * np.pi * (hrs / 24.0))
+
     return df.head(steps)
+
 
 
 def _build_model(input_shape):
@@ -320,9 +334,14 @@ def train_or_update(equip_grp, equipment, signal_id, start_dt, end_dt, lookback=
 
 def forecast_next_hours(equip_grp, equipment, signal_id, steps=24):
     """
-    Autoregresión con exógenos de pronóstico; si no hay pronóstico, mantiene exógenos
-    constantes pero actualiza hora_sin/cos. Clip al rango entrenado.
+    Proyección autoregresiva para 'steps' horas.
+    Usa exógenos del pronóstico; si no hay, mantiene exógenos y actualiza hora_sin/cos.
+    Alinea cada hora futura con la fila de pronóstico MÁS CERCANA (±59 min).
     """
+    from datetime import datetime, timedelta
+    import numpy as np
+    import pandas as pd
+
     paths = _paths(equip_grp, equipment, signal_id)
     pmodel, pmeta = paths["model"], paths["meta"]
     if not pmodel.exists():
@@ -335,14 +354,20 @@ def forecast_next_hours(equip_grp, equipment, signal_id, steps=24):
     y_min = meta.get("y_min", None)
     y_max = meta.get("y_max", None)
 
-    # Últimas ventanas (si 30 días no alcanza, intenta 120)
+    # Últimas ventanas para arrancar
     now = datetime.now().replace(minute=0, second=0, microsecond=0)
     Xh, yh, feats2, last_ts, df_hourly, _ = _prepare_dataset(
-        equip_grp, equipment, signal_id, now - timedelta(days=30), now, lookback
+        equip_grp, equipment, signal_id,
+        start_dt=now - timedelta(days=30),
+        end_dt=now,
+        lookback=lookback
     )
     if df_hourly is None or df_hourly.empty or len(df_hourly) < lookback:
         Xh, yh, feats2, last_ts, df_hourly, _ = _prepare_dataset(
-            equip_grp, equipment, signal_id, now - timedelta(days=120), now, lookback
+            equip_grp, equipment, signal_id,
+            start_dt=now - timedelta(days=120),
+            end_dt=now,
+            lookback=lookback
         )
         if df_hourly is None or df_hourly.empty or len(df_hourly) < lookback:
             raise RuntimeError("No hay datos recientes suficientes para proyectar.")
@@ -359,11 +384,10 @@ def forecast_next_hours(equip_grp, equipment, signal_id, steps=24):
     else:
         model = joblib.load(pmodel)
 
-    # Traer pronóstico exógeno
-    fdf = _get_forecast_df(equip_grp, equipment, steps)
-    use_forecast = isinstance(fdf, pd.DataFrame) and not fdf.empty
-    if use_forecast:
-        fdf = fdf.set_index("time").sort_index()
+    # Pronóstico exógeno (horario)
+    forecast_df = _get_forecast_df(equip_grp, equipment, steps)
+    use_forecast = isinstance(forecast_df, pd.DataFrame) and not forecast_df.empty
+    fdf = forecast_df.set_index('time').sort_index() if use_forecast else None
 
     preds = []
     curr_ts = df_hourly.index.max()
@@ -372,7 +396,7 @@ def forecast_next_hours(equip_grp, equipment, signal_id, steps=24):
     for i in range(steps):
         future_ts = curr_ts + timedelta(hours=1)
 
-        # Predecir
+        # 1) Predecir
         if backend == "lstm":
             x_in = window.reshape(1, lookback, len(feats))
             yhat = float(model.predict(x_in, verbose=0)[0,0])
@@ -380,36 +404,49 @@ def forecast_next_hours(equip_grp, equipment, signal_id, steps=24):
             x_in = window.reshape(1, lookback * len(feats))
             yhat = float(model.predict(x_in)[0])
 
-        # Clip (evita explosiones)
+        # 2) Clip al rango entrenado (evita explosiones)
         if (y_min is not None) and (y_max is not None):
             yhat = max(min(yhat, float(y_max)), float(y_min))
 
         preds.append((future_ts, yhat))
 
-        # Siguiente fila: yhat en VALUE + exógenos del forecast (si hay) + hora_sin/cos de esa hora
+        # 3) Construir siguiente fila: yhat en VALUE
         next_row = window[-1].copy()
         next_row[0] = yhat
 
-        # Hora del futuro
+        # Actualizar hora_sin/cos
         h = float(future_ts.hour)
-        hsin = np.sin(2*np.pi*(h/24.0))
-        hcos = np.cos(2*np.pi*(h/24.0))
+        hsin = np.sin(2 * np.pi * (h / 24.0))
+        hcos = np.cos(2 * np.pi * (h / 24.0))
         if "hora_sin" in feats: next_row[feats.index("hora_sin")] = hsin
         if "hora_cos" in feats: next_row[feats.index("hora_cos")] = hcos
 
-        if use_forecast and future_ts in fdf.index:
-            for name in ("temperature","relative_humidity","windspeed","winddirection"):
-                if name in feats and name in fdf.columns:
-                    idx = feats.index(name)
-                    val = fdf.loc[future_ts, name]
-                    if pd.notna(val):
-                        next_row[idx] = float(val)
+        # 4) Inyectar exógenos del pronóstico (fila más cercana)
+        if fdf is not None:
+            try:
+                target = pd.to_datetime(future_ts).floor('H')
+                if target in fdf.index:
+                    row = fdf.loc[target]
+                else:
+                    idxpos = fdf.index.get_indexer([target], method='nearest')
+                    row = fdf.iloc[int(idxpos[0])] if idxpos[0] != -1 else None
+                if row is not None:
+                    for name in ('temperature','relative_humidity','windspeed','winddirection','hora_sin','hora_cos'):
+                        if name in feats and name in fdf.columns:
+                            j = feats.index(name)
+                            val = float(row[name]) if pd.notna(row[name]) else None
+                            if val is not None and j < len(next_row):
+                                next_row[j] = val
+            except Exception:
+                pass
 
+        # 5) Desplazar ventana
         window = np.vstack([window[1:], next_row])
         curr_ts = future_ts
 
     out_df = pd.DataFrame(preds, columns=["TIME_FULL","FORECAST_VALUE"])
     return out_df
+
 
 def predict_last_hours(equip_grp, equipment, signal_id, hours=48):
     """

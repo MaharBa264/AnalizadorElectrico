@@ -572,3 +572,20 @@ def mapa_red():
         equipment=equipment,
         zip_url=url_for("static", filename="geodata/red_electrica.zip")
     )
+
+
+@bp.route("/analizador/debug_forecast")
+@login_required
+def debug_forecast():
+    from app.services.lstm import _get_forecast_df
+    equip_grp = request.args.get("equip_grp","")
+    equipment = request.args.get("equipment","")
+    df = _get_forecast_df(equip_grp, equipment, steps=96)
+    if df is None or df.empty:
+        return "forecast_df: vacío", 200
+    return f"""
+    filas: {len(df)}<br>
+    primera: {df['time'].min()}<br>
+    última: {df['time'].max()}<br>
+    columnas: {list(df.columns)}
+    """, 200

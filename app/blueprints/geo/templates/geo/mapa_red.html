@@ -1,5 +1,61 @@
+
 {% extends "base.html" %}
-{% block title %}Mapa de red{% endblock %}
+{% block title %}Mapa — Selección{% endblock %}
 {% block content %}
-<div class="alert alert-warning">El mapa Folium se integrará aquí. (Placeholder)</div>
+<div class="container my-4" style="max-width: 720px;">
+  <h3 class="mb-3">Mapa de Red</h3>
+  <div class="card shadow-sm">
+    <div class="card-body">
+      <form id="form_mapa" method="get" action="{{ url_for('geo.ver_mapa') }}">
+        <div class="mb-3">
+          <label for="equip_grp" class="form-label">Grupo de Equipo</label>
+          <select class="form-select form-select-lg" id="equip_grp" name="equip_grp" required>
+            <option value="" selected disabled>-- Seleccione un Grupo --</option>
+            {% for grp, equips in estructura.items() %}
+              <option value="{{ grp }}">{{ grp }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="mb-3">
+          <label for="equipment" class="form-label">Equipo</label>
+          <select class="form-select form-select-lg" id="equipment" name="equipment" required disabled>
+            <option value="" selected disabled>-- Seleccione un Equipo --</option>
+          </select>
+        </div>
+
+        <div class="d-grid">
+          <button type="submit" class="btn btn-primary btn-lg" id="btnVer" disabled>Ver mapa</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+const estructura = {{ estructura|tojson }};
+const grpSel = document.getElementById('equip_grp');
+const eqSel  = document.getElementById('equipment');
+const btn    = document.getElementById('btnVer');
+
+grpSel.addEventListener('change', () => {
+  const grp = grpSel.value;
+  eqSel.innerHTML = '<option value="" selected disabled>-- Seleccione un Equipo --</option>';
+  if (grp && estructura[grp]) {
+    Object.keys(estructura[grp]).forEach(eq => {
+      const opt = document.createElement('option');
+      opt.value = eq; opt.textContent = eq;
+      eqSel.appendChild(opt);
+    });
+    eqSel.disabled = false;
+  } else {
+    eqSel.disabled = true;
+  }
+  btn.disabled = true;
+});
+
+eqSel.addEventListener('change', () => {
+  btn.disabled = !(grpSel.value && eqSel.value);
+});
+</script>
 {% endblock %}
