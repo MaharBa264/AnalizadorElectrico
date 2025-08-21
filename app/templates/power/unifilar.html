@@ -1,50 +1,145 @@
 {% extends "base.html" %}
-{% block title %}Unifilar PyPSA{% endblock %}
+{% block title %}Unifilar (modo dibujo){% endblock %}
+
 {% block extra_head %}
-<link rel="stylesheet" href="https://unpkg.com/cytoscape@3.26.0/dist/cytoscape.min.css">
 <style>
-#cy{ height: 560px; background:#fff; border-radius:12px; border:1px solid #eee; }
-.legend span{ display:inline-block; width:14px; height:14px; border-radius:3px; margin-right:6px; vertical-align:middle; }
-.legend .ok{ background:#2bb673; } .legend .warn{ background:#ff9800; } .legend .crit{ background:#e53935; }
-.small-mono{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono","Courier New", monospace; font-size:12px; }
-.select-row{ display:flex; gap:.5rem; flex-wrap:wrap; align-items: end; }
-.select-row select{ min-width: 140px; }
-.badge-probe{ font-size: 12px; padding: 2px 6px; border-radius: 6px; background:#eef; }
+  .canvas-wrap{display:grid;grid-template-columns:1fr 320px;gap:12px}
+  #cy{height:600px;background:#fff;border-radius:12px;border:1px solid #e9ecef}
+  .toolbar{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+  .toolbar .btn{padding:6px 10px}
+  .prop-card{border:1px solid #e9ecef;border-radius:12px;padding:10px}
+  .prop-card h6{margin:0 0 6px 0}
+  .small-mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px}
+  .legend span{display:inline-block;width:14px;height:14px;border-radius:3px;margin-right:6px;vertical-align:middle}
+  .legend .ok{background:#2bb673}.legend .warn{background:#ff9800}.legend .crit{background:#e53935}
 </style>
 <script src="https://unpkg.com/cytoscape@3.26.0/dist/cytoscape.min.js"></script>
 {% endblock %}
 
 {% block content %}
-<div class="row g-3">
-  <div class="col-lg-8">
+<div class="d-flex align-items-center justify-content-between mb-2">
+  <div class="toolbar">
+    <button class="btn btn-outline-secondary" id="tool-select">Seleccionar</button>
+    <button class="btn btn-outline-primary"   id="tool-bus">Bus</button>
+    <button class="btn btn-outline-primary"   id="tool-line">Línea</button>
+    <button class="btn btn-outline-primary"   id="tool-trafo">Trafo 2</button>
+    <button class="btn btn-outline-primary"   id="tool-trafo3">Trafo 3</button>
+    <button class="btn btn-outline-danger"    id="tool-delete">Borrar</button>
+  </div>
+  <div class="d-flex align-items-center" style="gap:8px">
+    <label class="me-1">Instantánea</label>
+    <input type="datetime-local" id="ts" class="form-control form-control-sm" style="width:220px">
+    <button class="btn btn-primary btn-sm" id="btn-run">Calcular flujo</button>
+    <button class="btn btn-outline-secondary btn-sm" id="btn-map">Mapear tags</button>
+    <button class="btn btn-outline-secondary btn-sm" id="btn-save">Guardar</button>
+    <button class="btn btn-outline-secondary btn-sm" id="btn-load">Cargar</button>
+  </div>
+</div>
+
+<div class="canvas-wrap">
+  <div>
     <div id="cy"></div>
     <div class="mt-2 small">
-      <span class="legend"><span class="ok"></span> &lt;=60%</span> ·
-      <span class="legend"><span class="warn"></span> 60–90%</span> ·
-      <span class="legend"><span class="crit"></span> &gt;90%</span>
+      <span class="legend"><span class="ok"></span>&le;60%</span> ·
+      <span class="legend"><span class="warn"></span>60–90%</span> ·
+      <span class="legend"><span class="crit"></span>&gt;90%</span>
     </div>
   </div>
-  <div class="col-lg-4">
-    <div class="card p-3">
-      <div class="d-flex align-items-center justify-content-between">
-        <h6 class="mb-0">Unifilar</h6>
-        <input type="datetime-local" id="ts" class="form-control form-control-sm" style="width: 210px;">
-      </div>
-      <small class="text-muted mb-2">La hora se aplica a todos los tags como <b>instantánea</b>.</small>
 
-      <textarea id="cfg" class="form-control small-mono" rows="14" spellcheck="false">{
-  "buses":[{"name":"B1"},{"name":"B2"}],
-  "lines":[{"name":"L12","bus0":"B1","bus1":"B2","s_nom":10.0,"r_per_length":0.3,"x_per_length":0.9,"length_km":5.0}],
-  "loads":[{"name":"LD1","bus":"B1","p_mw":1.0,"q_mvar":0.2}],
-  "generators":[{"name":"G1","bus":"B2","p_set_mw":0.8,"v_set_pu":1.02,"p_max_mw":3.0,"control":"PV"}]
-}</textarea>
+  <div>
+    <div class="prop-card mb-2">
+      <h6>Propiedades</h6>
+      <div id="prop-empty" class="text-muted">Seleccioná un elemento…</div>
 
-      <div class="mt-2">
-        <button class="btn btn-primary btn-sm" id="btn-calcular">Calcular flujo</button>
-        <button class="btn btn-outline-secondary btn-sm" id="btn-mapeo">Mapear tags</button>
+      <div id="prop-bus" style="display:none">
+        <div class="mb-2">
+          <label class="form-label">Nombre</label>
+          <input class="form-control form-control-sm" id="bus-name">
+        </div>
       </div>
 
-      <div id="mapbox" class="mt-3"></div>
+      <div id="prop-line" style="display:none">
+        <div class="mb-2">
+          <label class="form-label">Nombre</label>
+          <input class="form-control form-control-sm" id="line-name">
+        </div>
+        <div class="row g-2">
+          <div class="col-6">
+            <label class="form-label">S<sub>nom</sub> (MVA)</label>
+            <input type="number" step="0.1" class="form-control form-control-sm" id="line-snom" value="10">
+          </div>
+          <div class="col-6">
+            <label class="form-label">Longitud (km)</label>
+            <input type="number" step="0.01" class="form-control form-control-sm" id="line-lkm" value="1">
+          </div>
+          <div class="col-6">
+            <label class="form-label">R (Ω/km)</label>
+            <input type="number" step="0.001" class="form-control form-control-sm" id="line-r" value="0.3">
+          </div>
+          <div class="col-6">
+            <label class="form-label">X (Ω/km)</label>
+            <input type="number" step="0.001" class="form-control form-control-sm" id="line-x" value="0.9">
+          </div>
+        </div>
+      </div>
+
+      <div id="prop-trafo" style="display:none">
+        <div class="mb-2">
+          <label class="form-label">Nombre</label>
+          <input class="form-control form-control-sm" id="trafo-name">
+        </div>
+        <div class="row g-2">
+          <div class="col-6">
+            <label class="form-label">S<sub>nom</sub> (MVA)</label>
+            <input type="number" step="0.1" class="form-control form-control-sm" id="trafo-snom" value="10">
+          </div>
+          <div class="col-6">
+            <label class="form-label">X<sub>pu</sub> (p.u.)</label>
+            <input type="number" step="0.01" class="form-control form-control-sm" id="trafo-xpu" value="0.1">
+          </div>
+        </div>
+      </div>
+
+      <div id="prop-trafo3" style="display:none">
+        <div class="mb-2"><label class="form-label">Nombre</label>
+          <input class="form-control form-control-sm" id="t3-name">
+        </div>
+        <div class="row g-2">
+          <div class="col-6"><label class="form-label">S<sub>nom</sub> (MVA)</label>
+            <input type="number" step="0.1" class="form-control form-control-sm" id="t3-snom" value="10">
+          </div>
+          <div class="col-6"><label class="form-label">X/R</label>
+            <input type="number" step="0.1" class="form-control form-control-sm" id="t3-xr" value="10">
+          </div>
+          <div class="col-4"><label class="form-label">V<sub>HV</sub> (kV)</label>
+            <input type="number" step="0.1" class="form-control form-control-sm" id="t3-vhv" value="132">
+          </div>
+          <div class="col-4"><label class="form-label">V<sub>MV</sub> (kV)</label>
+            <input type="number" step="0.1" class="form-control form-control-sm" id="t3-vmv" value="33">
+          </div>
+          <div class="col-4"><label class="form-label">V<sub>LV</sub> (kV)</label>
+            <input type="number" step="0.1" class="form-control form-control-sm" id="t3-vlv" value="13.2">
+          </div>
+        </div>
+        <div class="row g-2 mt-1">
+          <div class="col-4"><label class="form-label">Z<sub>HM</sub> (%)</label>
+            <input type="number" step="0.1" class="form-control form-control-sm" id="t3-zhm" value="12">
+          </div>
+          <div class="col-4"><label class="form-label">Z<sub>ML</sub> (%)</label>
+            <input type="number" step="0.1" class="form-control form-control-sm" id="t3-zml" value="12">
+          </div>
+          <div class="col-4"><label class="form-label">Z<sub>HL</sub> (%)</label>
+            <input type="number" step="0.1" class="form-control form-control-sm" id="t3-zhl" value="20">
+          </div>
+        </div>
+        <small class="text-muted">Z<sub>XY</sub> son las impedancias de cortocircuito entre pares (en % a S<sub>nom</sub>).</small>
+      </div>  
+
+    </div>
+
+    <div class="prop-card">
+      <h6>Modelo (solo lectura)</h6>
+      <pre id="cfg" class="small-mono" style="max-height:260px;overflow:auto">{}</pre>
     </div>
   </div>
 </div>
@@ -52,116 +147,440 @@
 
 {% block extra_scripts %}
 <script>
-// --- helpers REST ---
+/* ========= helpers REST ========= */
 async function getJSON(url){ const r = await fetch(url); if(!r.ok) throw new Error(await r.text()); return r.json(); }
-async function postJSON(url, body){ const r = await fetch(url,{method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)}); const j = await r.json(); if(!r.ok || j.ok===false) throw new Error(j.error||"Error"); return j; }
+async function postJSON(url, body){ const r = await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}); const j = await r.json(); if(!r.ok||j.ok===false) throw new Error(j.error||"Error"); return j; }
 const api = {
-  groups: ()=> getJSON("{{ url_for('power.tag_groups') }}"),
-  equipment: (grp)=> getJSON(`{{ url_for('power.tag_equipment') }}?grp=${encodeURIComponent(grp)}`),
-  ids: (grp, eq)=> getJSON(`{{ url_for('power.tag_ids') }}?grp=${encodeURIComponent(grp)}&equipment=${encodeURIComponent(eq)}`),
-  probe: (p)=> postJSON("{{ url_for('power.probe_tag') }}", p),
   pf: (cfg)=> postJSON("{{ url_for('power.unifilar_build') }}", cfg),
+  save: (name,map)=> postJSON("{{ url_for('power.map_save') }}",{name, map}),
+  load: (name)=> getJSON(`{{ url_for('power.map_load') }}?name=${encodeURIComponent(name)}`)
 };
 
-// --- grafo ---
-let cy = cytoscape({
+/* ========= Cytoscape setup ========= */
+let tool = "select";   // select|bus|line|trafo|delete
+let linkMode = null;   // {type:'line'|'trafo', source:node}
+let idCounters = { bus:1, line:1, trafo:1 };
+
+const cy = cytoscape({
   container: document.getElementById('cy'),
   style: [
-    { selector: 'node', style: { 'label': 'data(label)', 'text-valign':'center', 'background-color':'#90caf9', 'shape':'round-rectangle', 'width':'label', 'padding':'8px' } },
-    { selector: 'edge[type="line"]', style: { 'width': 3, 'line-color': '#78909c', 'target-arrow-shape': 'triangle', 'target-arrow-color': '#78909c', 'curve-style':'bezier', 'label':'data(label)' } },
-    { selector: 'edge[type="trafo"]', style: { 'width': 3, 'line-style':'dashed', 'line-color': '#8e24aa', 'target-arrow-shape': 'triangle', 'target-arrow-color': '#8e24aa' } },
-    { selector: 'edge[severity = "warn"]', style: {'line-color':'#ff9800','target-arrow-color':'#ff9800'} },
-    { selector: 'edge[severity = "crit"]', style: {'line-color':'#e53935','target-arrow-color':'#e53935'} },
+    { selector:'node[type="bus"]', style:{ 'background-color':'#90caf9','label':'data(label)','text-valign':'center','shape':'round-rectangle','padding':'8px','width':'label' } },
+    { selector:'edge[type="line"]', style:{ 'width':3,'line-color':'#78909c','target-arrow-shape':'triangle','target-arrow-color':'#78909c','curve-style':'bezier','label':'data(label)' } },
+    { selector: 'node[type="trafo"]', style: {
+      'shape': 'rectangle',
+      'width': 26, 'height': 18,
+      'background-color': '#ffffff',
+      'border-color': '#8e24aa', 'border-width': 2,
+      'label': 'data(label)', 'font-size': 8
+    }},
+    { selector: 'edge[type="tlink"]', style: {
+      'width': 2,
+      'line-style': 'dotted',
+      'line-color': '#b39ddb',
+      'curve-style': 'bezier'
+    }},
+    { selector: 'node[type="trafo3"]', style: {
+      'shape': 'round-diamond',
+      'width': 26, 'height': 26,
+      'background-color': '#ffffff',
+      'border-color': '#5e35b1', 'border-width': 2,
+      'label': 'data(label)', 'font-size': 8
+    }},
+    { selector: 'edge[type="t3link"]', style: {
+      'width': 2, 'line-style': 'dotted', 'line-color': '#9575cd', 'curve-style': 'bezier'
+    }},
+    { selector:'edge[severity="warn"]', style:{ 'line-color':'#ff9800','target-arrow-color':'#ff9800'} },
+    { selector:'edge[severity="crit"]', style:{ 'line-color':'#e53935','target-arrow-color':'#e53935'} },
+    { selector:':selected', style:{ 'border-width':2,'border-color':'#333' } }
   ],
-  layout: { name: 'breadthfirst', directed: true, padding: 20 }
+  layout:{ name:'grid' }
 });
 
-function drawGraph(graph){
-  const nodes = (graph.nodes||[]).map(n=>({ data: n.data }));
-  const edges = (graph.edges||[]).map(e=>({ data: e.data }));
-  cy.elements().remove();
-  cy.add(nodes).add(edges);
-  cy.layout({ name:'breadthfirst', directed:true, padding:20, spacingFactor:1.2 }).run();
-}
+/* ========= Estado visual ========= */
+const statusEl = document.createElement('div');
+statusEl.className = 'small text-muted mt-1';
+statusEl.style.minHeight = '18px';
+document.querySelector('.canvas-wrap').insertAdjacentElement('beforebegin', statusEl);
+function setStatus(msg){ statusEl.textContent = msg || ''; }
 
-// --- mapeo de tags (UI mínima) ---
-function makeSelectorRow(prefix, field, scaleDefault){
-  const row = document.createElement('div'); row.className='select-row';
-  row.innerHTML = `
-    <div><label class="form-label small">Grupo</label><select id="${prefix}_grp" class="form-select form-select-sm"></select></div>
-    <div><label class="form-label small">Equipo</label><select id="${prefix}_eq" class="form-select form-select-sm"></select></div>
-    <div><label class="form-label small">ID</label><select id="${prefix}_id" class="form-select form-select-sm"></select></div>
-    <div><label class="form-label small">scale</label><input id="${prefix}_sc" type="number" step="0.001" class="form-control form-control-sm" value="${scaleDefault||1}"></div>
-    <div><button class="btn btn-sm btn-outline-secondary" id="${prefix}_probe" type="button">Probar</button> <span class="badge-probe" id="${prefix}_result"></span></div>
-  `;
-  (async ()=>{
-    const grpSel = row.querySelector(`#${prefix}_grp`);
-    const eqSel  = row.querySelector(`#${prefix}_eq`);
-    const idSel  = row.querySelector(`#${prefix}_id`);
-    const res    = row.querySelector(`#${prefix}_result`);
-    const probe  = row.querySelector(`#${prefix}_probe`);
-    const groups = await api.groups(); grpSel.innerHTML = groups.map(g=>`<option>${g}</option>`).join('');
-    async function updateEq(){ const eqs = await api.equipment(grpSel.value); eqSel.innerHTML = eqs.map(e=>`<option>${e}</option>`).join(''); await updateId(); }
-    async function updateId(){ const ids = await api.ids(grpSel.value, eqSel.value); idSel.innerHTML = ids.map(id=>`<option>${id}</option>`).join(''); }
-    grpSel.onchange=updateEq; eqSel.onchange=updateId; await updateEq();
-    probe.onclick = async ()=>{
-      try{
-        const s = { equip_grp: grpSel.value, equipment: eqSel.value, signal_id: idSel.value, scale: Number(row.querySelector(`#${prefix}_sc`).value||1) };
-        const ts = document.getElementById('ts').value;   // ⬅️ NUEVO
-        if (ts) s.timestamp = ts;                         // ⬅️ NUEVO
-        const r = await api.probe(s);
-        res.textContent = r.value.toFixed(3);
-      }catch(e){ res.textContent = 'error'; }
-    };
-  })();
-  row.getValue = ()=>({
-    field,
-    source: {
-      equip_grp: row.querySelector(`#${prefix}_grp`).value,
-      equipment: row.querySelector(`#${prefix}_eq`).value,
-      signal_id: row.querySelector(`#${prefix}_id`).value,
-      scale: Number(row.querySelector(`#${prefix}_sc`).value||1)
-    }
-  });
-  return row;
-}
 
-document.getElementById("btn-mapeo").onclick = async ()=>{
-  const cfg = JSON.parse(document.getElementById('cfg').value);
-  const form = document.getElementById('mapbox'); form.innerHTML = '';
-  function section(title){ const h = document.createElement('h6'); h.textContent=title; form.appendChild(h); }
-  function attach(box, obj, row){
-    box.appendChild(row);
-    const get = row.getValue;
-    box.getSources = ()=>{ const s = get(); obj.sources = obj.sources || {}; obj.sources[s.field] = s.source; };
+/* ========= Toolbar (igual) ========= */
+function setTool(t){ tool=t; linkMode=null;
+  document.querySelectorAll('.toolbar .btn').forEach(b=>b.classList.remove('active'));
+  document.getElementById('tool-'+t).classList.add('active');
+  setStatus(t==='line' ? 'Modo línea: clic en bus origen y luego destino'
+         : t==='trafo' ? 'Modo trafo: clic en bus origen y luego destino'
+         : t==='bus'  ? 'Modo bus: clic en el lienzo para crear'
+         : t==='delete' ? 'Modo borrar: clic en nodo o línea'
+         : '');
+}
+document.getElementById('tool-select').onclick = ()=> setTool('select');
+document.getElementById('tool-bus').onclick    = ()=> setTool('bus');
+document.getElementById('tool-line').onclick   = ()=> setTool('line');
+document.getElementById('tool-trafo').onclick  = ()=> setTool('trafo');
+document.getElementById('tool-trafo3').onclick = ()=> setTool('trafo3');
+document.getElementById('tool-delete').onclick = ()=> setTool('delete');
+setTool('select');
+
+/* ========= Eventos separados: canvas / node / edge ========= */
+
+// 1) Clic sobre el FONDO (canvas)
+cy.on('tap', function (ev){
+  if(ev.target !== cy) return;
+  if(tool==='bus'){
+    const id = `B${idCounters.bus++}`;
+    cy.add({ group:'nodes', data:{ id, label:id, type:'bus' }, position: ev.position });
+    updateCfgPreview();
+    setStatus(`Bus ${id} creado`);
+  } else {
+    // si estabas en modo línea/trafo y clickeaste fondo, cancelamos el origen
+    if(linkMode){ linkMode=null; setStatus('Origen cancelado'); }
   }
-  section('Cargas');
-  (cfg.loads||[]).forEach((ld,i)=>{
-    const box=document.createElement('div'); box.className='border rounded p-2 mb-2'; box.innerHTML = `<b>${ld.name}</b> <small class="text-muted">(${ld.bus})</small>`;
-    attach(box, ld, makeSelectorRow(`ld${i}_p`,'p_mw','0.001'));
-    attach(box, ld, makeSelectorRow(`ld${i}_q`,'q_mvar','0.001'));
-    form.appendChild(box);
-  });
-  section('Generadores');
-  (cfg.generators||[]).forEach((g,i)=>{
-    const box=document.createElement('div'); box.className='border rounded p-2 mb-2'; box.innerHTML = `<b>${g.name}</b> <small class="text-muted">(${g.bus})</small>`;
-    attach(box, g, makeSelectorRow(`g${i}_p`,'p_set_mw','0.001'));
-    attach(box, g, makeSelectorRow(`g${i}_v`,'v_set_pu','0.01'));
-    form.appendChild(box);
-  });
-  const saveBtn = document.createElement('button'); saveBtn.className='btn btn-sm btn-success'; saveBtn.textContent='Aplicar mapeo al JSON';
-  saveBtn.onclick = ()=>{ [...form.querySelectorAll('.border')].forEach(b=>b.getSources&&b.getSources()); document.getElementById('cfg').value = JSON.stringify(cfg,null,2); };
-  form.appendChild(saveBtn);
-};
+});
 
-document.getElementById("btn-calcular").onclick = async ()=>{
+// 2) Clic sobre un NODO (bus)
+cy.on('tap', 'node', function (ev){
+  const n = ev.target;
+  if (tool==='delete') {
+    if (n.data('type')==='trafo') {
+      cy.edges(`[source = "${n.id()}"], [target = "${n.id()}"]`).remove();
+    }
+    n.remove(); updateCfgPreview(); setStatus('Elemento eliminado');
+    return;
+  }
+  if(tool==='delete'){
+    n.remove();
+    updateCfgPreview();
+    setStatus('Bus eliminado');
+    return;
+  }
+
+  if(tool==='line'){
+    // primer clic: seleccionar origen
+    if(!linkMode){
+      linkMode = { type: tool, source: n.id() };
+      setStatus(`Origen: ${n.data('label')||n.id()}. Elegí el bus destino…`);
+      return;
+    }
+    // segundo clic: si es el mismo, cancelar
+    if(linkMode.source === n.id()){
+      linkMode = null;
+      setStatus('Origen cancelado');
+      return;
+    }
+    // crear edge
+    const src = linkMode.source;
+    const dst = n.id();
+    if(tool==='line'){
+      const id = `L${idCounters.line++}`;
+      cy.add({ group:'edges', data:{
+        id, type:'line', source: src, target: dst, label: id,
+        s_nom: 10, r_ohm_km: 0.3, x_ohm_km: 0.9, length_km: 1
+      }});
+      setStatus(`Línea ${id}: ${src} → ${dst}`);
+    }else{
+      const id = `T${idCounters.trafo++}`;
+      cy.add({ group:'edges', data:{
+        id, type:'trafo', source: src, target: dst, label: id,
+        s_nom: 10, x_pu: 0.1
+      }});
+      setStatus(`Trafo ${id}: ${src} → ${dst}`);
+    }
+    linkMode = null;
+    updateCfgPreview();
+  }
+
+  if (tool==='trafo') {
+    // primer clic: seleccionar bus origen
+    if (!linkMode) {
+      linkMode = { type: 'trafo', source: n.id() };
+      setStatus(`Origen: ${n.data('label') || n.id()}. Elegí el bus destino…`);
+      return;
+    }
+    // segundo clic: si es el mismo, cancelar
+    if (linkMode.source === n.id()) {
+      linkMode = null; setStatus('Origen cancelado'); return;
+    }
+    const src = linkMode.source;
+    const dst = n.id();
+
+    // punto medio para ubicar el símbolo
+    const p1 = cy.getElementById(src).position();
+    const p2 = cy.getElementById(dst).position();
+    const mid = { x: (p1.x + p2.x)/2, y: (p1.y + p2.y)/2 };
+
+    const id = `T${idCounters.trafo++}`;
+    // nodo trafo (con datos eléctricos)
+    cy.add({ group:'nodes', data:{ id, type:'trafo', label:id, s_nom:10, x_pu:0.1 }, position: mid });
+    // dos links visuales
+    cy.add({ group:'edges', data:{ id:`TL_${id}_a`, type:'tlink', source: src, target: id } });
+    cy.add({ group:'edges', data:{ id:`TL_${id}_b`, type:'tlink', source: id, target: dst } });
+
+    setStatus(`Trafo ${id}: ${src} ⟷ ${dst}`);
+    linkMode = null; updateCfgPreview(); return;
+  }
+
+  if (tool==='trafo3') {
+    // Clickea 3 buses en orden: HV, MV, LV
+    if (!linkMode) {
+      linkMode = { type:'trafo3', buses: [ {id:n.id(), role:'hv'} ] };
+      setStatus(`Trafo3: HV = ${n.data('label')||n.id()}. Elegí MV…`);
+      return;
+    }
+    if (linkMode.type!=='trafo3') return;
+
+    const picked = linkMode.buses.map(b=>b.id);
+    if (picked.includes(n.id())) { setStatus('Ya elegido ese bus.'); return; }
+
+    if (linkMode.buses.length===1){
+      linkMode.buses.push({id:n.id(), role:'mv'});
+      setStatus(`Trafo3: MV = ${n.data('label')||n.id()}. Elegí LV…`);
+      return;
+    }
+
+    // tercer clic = LV → crear el nodo trafo3 y sus 3 links
+    linkMode.buses.push({id:n.id(), role:'lv'});
+
+    const hv = cy.getElementById(linkMode.buses.find(b=>b.role==='hv').id);
+    const mv = cy.getElementById(linkMode.buses.find(b=>b.role==='mv').id);
+    const lv = cy.getElementById(linkMode.buses.find(b=>b.role==='lv').id);
+
+    const mid = {
+      x: (hv.position().x + mv.position().x + lv.position().x) / 3,
+      y: (hv.position().y + mv.position().y + lv.position().y) / 3
+    };
+
+    const id = `T3_${idCounters.trafo++}`;
+    cy.add({ group:'nodes', data:{
+        id, type:'trafo3', label:id,
+        // valores por defecto editables en el inspector
+        s_nom_mva: 10,
+        v_hv_kv: 132, v_mv_kv: 33, v_lv_kv: 13.2,
+        z_hm_pct: 12, z_ml_pct: 12, z_hl_pct: 20,  // impedancias pares (%)
+        xr: 10  // X/R típico; si no querés R, lo podés dejar en 0
+      }, position: mid });
+
+    // links visuales y roles en los links
+    cy.add({ group:'edges', data:{ id:`T3L_${id}_HV`, type:'t3link', role:'hv', source: hv.id(), target: id }});
+    cy.add({ group:'edges', data:{ id:`T3L_${id}_MV`, type:'t3link', role:'mv', source: mv.id(), target: id }});
+    cy.add({ group:'edges', data:{ id:`T3L_${id}_LV`, type:'t3link', role:'lv', source: lv.id(), target: id }});
+
+    setStatus(`Trafo3 ${id} creado (HV/MV/LV).`);
+    linkMode = null; updateCfgPreview(); return;
+  }
+
+});
+
+// 3) Clic sobre una LÍNEA/TRAFO (edge)
+cy.on('tap', 'edge', function (ev){
+  const e = ev.target;
+  if (tool==='delete') {
+    if (e.data('type') === 'tlink') {
+      // si borrás un link, borrá todo el trafo
+      const nTrafo = (e.source().data('type')==='trafo') ? e.source() :
+                     (e.target().data('type')==='trafo') ? e.target() : null;
+      if (nTrafo) {
+        cy.edges(`[source = "${nTrafo.id()}"], [target = "${nTrafo.id()}"]`).remove();
+        nTrafo.remove();
+      } else {
+        e.remove();
+      }
+    } else {
+      e.remove();
+    }
+    updateCfgPreview(); setStatus('Elemento eliminado');
+  }
+});
+
+// 4) Inspector al seleccionar (se mantiene)
+cy.on('select unselect', ()=> refreshInspector());
+
+/* ========= Selection & inspector ========= */
+cy.on('select unselect', ()=> refreshInspector());
+
+function refreshInspector(){
+  hideAll('#prop-empty,#prop-bus,#prop-line,#prop-trafo');
+  const sel = cy.$(':selected');
+  if(sel.length!==1){ show('#prop-empty'); return; }
+  const el = sel[0]; const tp = el.isNode()? el.data('type'): el.data('type');
+
+  if(el.isNode() && tp==='bus'){
+    show('#prop-bus');
+    const name = document.getElementById('bus-name');
+    name.value = el.data('label') || el.id();
+    name.oninput = ()=>{ el.data('label', name.value); updateCfgPreview(); };
+    return;
+  }
+
+  if(el.isEdge() && tp==='line'){
+    show('#prop-line');
+    const f = (id)=>document.getElementById(id);
+    f('line-name').value = el.data('label');    f('line-name').oninput = ()=>{ el.data('label', f('line-name').value); updateCfgPreview(); };
+    f('line-snom').value = el.data('s_nom');    f('line-snom').oninput = ()=>{ el.data('s_nom', parseFloat(f('line-snom').value||0)); updateCfgPreview(); };
+    f('line-lkm').value  = el.data('length_km');f('line-lkm').oninput  = ()=>{ el.data('length_km', parseFloat(f('line-lkm').value||0)); updateCfgPreview(); };
+    f('line-r').value    = el.data('r_ohm_km'); f('line-r').oninput    = ()=>{ el.data('r_ohm_km', parseFloat(f('line-r').value||0)); updateCfgPreview(); };
+    f('line-x').value    = el.data('x_ohm_km'); f('line-x').oninput    = ()=>{ el.data('x_ohm_km', parseFloat(f('line-x').value||0)); updateCfgPreview(); };
+    return;
+  }
+
+  if (el.isNode() && tp==='trafo'){
+    show('#prop-trafo');
+    const f = (id)=>document.getElementById(id);
+    f('trafo-name').value = el.data('label') || el.id();
+    f('trafo-name').oninput = ()=>{ el.data('label', f('trafo-name').value); updateCfgPreview(); };
+    f('trafo-snom').value = el.data('s_nom') ?? 10;
+    f('trafo-snom').oninput = ()=>{ el.data('s_nom', parseFloat(f('trafo-snom').value||0)); updateCfgPreview(); };
+    f('trafo-xpu').value  = el.data('x_pu') ?? 0.1;
+    f('trafo-xpu').oninput  = ()=>{ el.data('x_pu', parseFloat(f('trafo-xpu').value||0)); updateCfgPreview(); };
+    return;
+  }
+
+  if (el.isNode() && el.data('type')==='trafo3'){
+    show('#prop-trafo3');
+    const f = id => document.getElementById(id);
+    const up = ()=> updateCfgPreview();
+
+    f('t3-name').value = el.data('label') || el.id();
+    f('t3-name').oninput = ()=>{ el.data('label', f('t3-name').value); up(); };
+
+    f('t3-snom').value = el.data('s_nom_mva') ?? 10;
+    f('t3-snom').oninput = ()=>{ el.data('s_nom_mva', parseFloat(f('t3-snom').value||0)); up(); };
+
+    f('t3-xr').value = el.data('xr') ?? 10;
+    f('t3-xr').oninput = ()=>{ el.data('xr', parseFloat(f('t3-xr').value||0)); up(); };
+
+    f('t3-vhv').value = el.data('v_hv_kv') ?? 132;
+    f('t3-vhv').oninput = ()=>{ el.data('v_hv_kv', parseFloat(f('t3-vhv').value||0)); up(); };
+    f('t3-vmv').value = el.data('v_mv_kv') ?? 33;
+    f('t3-vmv').oninput = ()=>{ el.data('v_mv_kv', parseFloat(f('t3-vmv').value||0)); up(); };
+    f('t3-vlv').value = el.data('v_lv_kv') ?? 13.2;
+    f('t3-vlv').oninput = ()=>{ el.data('v_lv_kv', parseFloat(f('t3-vlv').value||0)); up(); };
+
+    f('t3-zhm').value = el.data('z_hm_pct') ?? 12;
+    f('t3-zhm').oninput = ()=>{ el.data('z_hm_pct', parseFloat(f('t3-zhm').value||0)); up(); };
+    f('t3-zml').value = el.data('z_ml_pct') ?? 12;
+    f('t3-zml').oninput = ()=>{ el.data('z_ml_pct', parseFloat(f('t3-zml').value||0)); up(); };
+    f('t3-zhl').value = el.data('z_hl_pct') ?? 20;
+    f('t3-zhl').oninput = ()=>{ el.data('z_hl_pct', parseFloat(f('t3-zhl').value||0)); up(); };
+    return;
+  }
+
+
+  show('#prop-empty');
+}
+
+function hideAll(sel){ document.querySelectorAll(sel).forEach(e=> e.style.display='none'); }
+function show(sel){ const el=document.querySelector(sel); if(el) el.style.display='block'; }
+
+/* ========= Build cfg from graph ========= */
+function buildCfg(){
+  const buses = cy.nodes('[type="bus"]').map(n=>({ name: n.data('label')||n.id() }));
+  const lines = cy.edges('[type="line"]').map(e=>{
+    const d=e.data();
+    return {
+      name: d.label||d.id, bus0: cy.getElementById(d.source).data('label')||d.source,
+      bus1: cy.getElementById(d.target).data('label')||d.target,
+      s_nom: Number(d.s_nom||0), r_ohm_km: Number(d.r_ohm_km||0),
+      x_ohm_km: Number(d.x_ohm_km||0), length_km: Number(d.length_km||0)
+    };
+  });
+  const trafos = cy.nodes('[type="trafo"]').map(n=>{
+    const id = n.id();
+    // vecinos conectados por tlinks
+    const neigh = cy.edges(`edge[type="tlink"][source = "${id}"], edge[type="tlink"][target = "${id}"]`)
+                  .connectedNodes('[type="bus"]');
+    if (neigh.length < 2) return null;  // incompleto
+    const b0 = neigh[0].data('label') || neigh[0].id();
+    const b1 = neigh[1].data('label') || neigh[1].id();
+    const d  = n.data();
+    return { name: d.label || id, bus0: b0, bus1: b1, s_nom: Number(d.s_nom||0), x_pu: Number(d.x_pu||0.1) };
+  }).filter(Boolean);
+  const t3s = cy.nodes('[type="trafo3"]').map(n=>{
+    const id = n.id(), d = n.data();
+    const links = cy.edges(`edge[type="t3link"][source = "${id}"], edge[type="t3link"][target = "${id}"]`);
+    // recolectar HV/MV/LV por el 'role' de cada link
+    const roles = {};
+    links.forEach(e=>{
+      const role = e.data('role');
+      const other = (e.source().id()===id) ? e.target() : e.source();
+      if(other.data('type')!=='bus') return;
+      roles[role] = other.data('label') || other.id();
+    });
+    if(!roles.hv || !roles.mv || !roles.lv) return null;
+
+    return {
+      name: d.label || id,
+      bus_hv: roles.hv, bus_mv: roles.mv, bus_lv: roles.lv,
+      s_nom_mva: Number(d.s_nom_mva || 0),
+      v_hv_kv: Number(d.v_hv_kv || 0),
+      v_mv_kv: Number(d.v_mv_kv || 0),
+      v_lv_kv: Number(d.v_lv_kv || 0),
+      z_hm_pct: Number(d.z_hm_pct || 0),
+      z_ml_pct: Number(d.z_ml_pct || 0),
+      z_hl_pct: Number(d.z_hl_pct || 0),
+      xr: Number(d.xr || 0)
+    };
+  }).filter(Boolean);
+  return { buses, lines, transformers: trafos, transformers3w: t3s, loads:[], generators:[] };
+}
+
+function updateCfgPreview(){
+  const cfg = buildCfg();
+  document.getElementById('cfg').textContent = JSON.stringify(cfg,null,2);
+}
+
+/* ========= Run PF ========= */
+document.getElementById('btn-run').onclick = async ()=>{
   try{
-    const cfg = JSON.parse(document.getElementById('cfg').value);
-    const tsInput = document.getElementById('ts').value;
-    if (tsInput) cfg.timestamp = tsInput; // snapshot global
+    const cfg = buildCfg();
+    const ts = document.getElementById('ts').value;
+    if(ts) cfg.timestamp = ts;  // snapshot global
     const r = await api.pf(cfg);
-    drawGraph(r.graph||{nodes:[],edges:[]});
+    drawResults(r);
   }catch(e){ alert(e.message||e); }
 };
+
+function drawResults(r){
+  // coloreo por loading como venías haciendo
+  (r.graph?.edges||[]).forEach(ed=>{
+    const el = cy.getElementById(ed.data.id);
+    if(el && el.isEdge()){
+      el.data('severity', ed.data.severity||'ok');
+      el.data('label', `${ed.data.id} ${(ed.data.loading??0).toFixed(0)}%`);
+    }
+  });
+}
+
+/* ========= Save / Load ========= */
+document.getElementById('btn-save').onclick = async ()=>{
+  const name = prompt('Nombre del mapa a guardar:', 'default');
+  if(!name) return;
+  const map = cy.json();  // incluye posiciones
+  await api.save(name, map);
+  alert('Guardado.');
+};
+
+document.getElementById('btn-load').onclick = async ()=>{
+  const name = prompt('Nombre del mapa a cargar:', 'default');
+  if(!name) return;
+  const res = await api.load(name);
+  cy.json(res.map);
+  // re-sincronizar contadores aproximados
+  idCounters.bus  = cy.nodes('[type="bus"]').size()+1;
+  idCounters.line = cy.edges('[type="line"]').size()+1;
+  idCounters.trafo= cy.edges('[type="trafo"]').size()+1;
+  updateCfgPreview();
+};
+
+/* ========= Mapear tags (reutilizar UI actual) ========= */
+document.getElementById('btn-map').onclick = ()=>{
+  // Generamos un cfg mínimo y lo “inyectamos” en el <pre> para
+  // que tu UI de mapeo (si la llamás después) tome ese JSON.
+  // Si ya tenés un modal propio, podés reutilizarlo aquí.
+  alert('Usá el botón "Mapear tags" de tu UI existente.\nEste editor ya genera el cfg.\n(Podemos integrar el mapeo sobre la selección en un paso siguiente).');
+};
+
+// init
+updateCfgPreview();
 </script>
 {% endblock %}

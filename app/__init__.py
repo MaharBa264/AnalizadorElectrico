@@ -60,7 +60,7 @@ def create_app(config_object=None):
     from app.blueprints.power.routes import bp as power_bp
     app.register_blueprint(power_bp)
 
-    from app.blueprints.protections.routes import bp as protections_bp
-    app.register_blueprint(protections_bp)
+    from app.blueprints.protections.routes import prot_bp
+    app.register_blueprint(prot_bp)
 
     return app

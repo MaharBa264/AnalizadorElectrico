@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Protecciones{% endblock %}
+{% block content %}
+<div class="card p-3">
+  <h5 class="mb-2">Protecciones</h5>
+  <p class="text-muted">Calculá ajustes ANSI 50/51 a partir de históricos de corriente, tensión y longitud de línea.</p>
+
+    <a class="btn btn-primary btn-sm" href="{{ url_for('protections.wizard5051') }}">Wizard 50/51</a>
+</div>
+{% endblock %}

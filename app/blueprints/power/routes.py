@@ -274,6 +274,68 @@ def resolve_sources(cfg, snapshot_dt=None):
 def unifilar_index():
     return render_template("power/unifilar.html")
 
+
+def expand_three_winding(cfg):
+    """
+    Convierte transformers3w -> 3 trafos de 2 devanados con un bus estrella interno.
+    Usa equivalencia en estrella a partir de Z_HM, Z_ML, Z_HL (en p.u.).
+    Si XR > 0, reparte R/X; si XR=0, usa solo X (R=0).
+    """
+    import math
+
+    buses = cfg.get("buses", [])
+    trafos = cfg.get("transformers", [])
+    t3s = cfg.get("transformers3w", []) or []
+
+    def add_bus(name):
+        if not any(b.get("name")==name for b in buses):
+            buses.append({"name": name})
+
+    for t in t3s:
+        name = t.get("name","T3")
+        hv = t["bus_hv"]; mv = t["bus_mv"]; lv = t["bus_lv"]
+        S = float(t.get("s_nom_mva", 10.0))
+        # impedancias de cc entre pares, en p.u. (de % a p.u.)
+        Z_hm = float(t.get("z_hm_pct", 12.0))/100.0
+        Z_ml = float(t.get("z_ml_pct", 12.0))/100.0
+        Z_hl = float(t.get("z_hl_pct", Z_hm*100 + Z_ml*100))/100.0  # si no viene, aproximar
+
+        # Equivalente en estrella: resolver Z_H, Z_M, Z_L
+        Z_H = 0.5*(Z_hm + Z_hl - Z_ml)
+        Z_M = 0.5*(Z_hm + Z_ml - Z_hl)
+        Z_L = 0.5*(Z_hl + Z_ml - Z_hm)
+        # clamp mínimos
+        Z_H = max(Z_H, 1e-4); Z_M = max(Z_M, 1e-4); Z_L = max(Z_L, 1e-4)
+
+        xr = float(t.get("xr", 0.0))
+        def split_rx(Zpu, xr):
+            if xr and xr>0:
+                # dado X/R = xr → Z^2 = R^2 + X^2 → R = Z/sqrt(1+xr^2), X = R*xr
+                R = Zpu / math.sqrt(1.0 + xr*xr)
+                X = R * xr
+                return R, X
+            else:
+                return 0.0, Zpu
+
+        rH,xH = split_rx(Z_H, xr)
+        rM,xM = split_rx(Z_M, xr)
+        rL,xL = split_rx(Z_L, xr)
+
+        star = f"{name}_STAR"
+        add_bus(star)
+
+        # Nota: el microservicio ya entiende 'transformers' de 2 dev con 's_nom' y 'x_pu'.
+        # Si soporta r_pu, se lo pasamos; si lo ignora, no afecta.
+        trafos.append({"name": f"{name}_H", "bus0": hv, "bus1": star, "s_nom": S, "x_pu": xH, "r_pu": rH})
+        trafos.append({"name": f"{name}_M", "bus0": mv, "bus1": star, "s_nom": S, "x_pu": xM, "r_pu": rM})
+        trafos.append({"name": f"{name}_L", "bus0": lv, "bus1": star, "s_nom": S, "x_pu": xL, "r_pu": rL})
+
+    cfg["buses"] = buses
+    cfg["transformers"] = trafos
+    cfg.pop("transformers3w", None)
+    return cfg
+
+
 @bp.route("/power/unifilar", methods=["POST"])
 def unifilar_build():
     cfg = request.get_json(force=True)
@@ -286,6 +348,7 @@ def unifilar_build():
         except Exception:
             snapshot_dt = None
     cfg_num = resolve_sources(cfg, snapshot_dt=snapshot_dt)
+    cfg_num = expand_three_winding(cfg_num)
     try:
         r = requests.post(f"{PYPSA_SVC_URL}/pf", json=cfg_num, timeout=30)
         data = r.json()
