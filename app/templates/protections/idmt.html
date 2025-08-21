@@ -2,6 +2,11 @@
 {% block title %}Curvas IDMT (IEC 60255){% endblock %}
 {% block extra_head %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/brand-edesal.css') }}">
+<style>
+.select-row{ display:flex; gap:.5rem; flex-wrap:wrap; }
+.select-row select{ min-width: 140px; }
+.badge-probe{ font-size: 12px; padding: 2px 6px; border-radius: 6px; background:#eef; }
+</style>
 {% endblock %}
 {% block content %}
 <h2 class="mb-3">Curvas IDMT (IEC 60255)</h2>
@@ -9,7 +14,7 @@
   <div class="col-lg-4">
     <div class="card p-3">
       <div class="mb-2"><label class="form-label">I<sub>fault</sub> [A]</label><input type="number" class="form-control" id="I_fault" value="2500"></div>
-      <div class="mb-2"><label class="form-label">I<sub>s</sub> (pickup) [A]</label><input type="number" class="form-control" id="Is" value="200"></div>
+      <div class="mb-2"><label class="form-label">I<sub>s</sub> [A]</label><input type="number" class="form-control" id="Is" value="200"></div>
       <div class="mb-2"><label class="form-label">TMS</label><input type="text" class="form-control" id="TMS" value="0,1"></div>
       <div class="mb-2"><label class="form-label">Curva</label>
         <select class="form-select" id="curve">
@@ -36,39 +41,39 @@
 
 <!-- Modal sugerencias -->
 <div class="modal" tabindex="-1" id="modal-sug" style="display:none; background:rgba(0,0,0,.4); position:fixed; inset:0; align-items:center; justify-content:center;">
-  <div class="card p-3" style="width: min(900px, 95vw); max-height: 85vh; overflow:auto;">
+  <div class="card p-3" style="width: min(980px, 95vw); max-height: 85vh; overflow:auto;">
     <div class="d-flex justify-content-between align-items-center mb-2">
-      <h5 class="mb-0">Sugerir parámetros desde SQL + KML</h5>
+      <h5 class="mb-0">Sugerir parámetros desde SQL + SHP/KML</h5>
       <button class="btn btn-sm btn-outline-secondary" id="close-sug">Cerrar</button>
     </div>
     <div class="row g-2">
       <div class="col-md-3"><label class="form-label">V [kV]</label><input type="number" id="s_V" class="form-control" value="13.2" step="0.1"></div>
       <div class="col-md-3"><label class="form-label">pf</label><input type="number" id="s_pf" class="form-control" value="0.95" step="0.01"></div>
       <div class="col-md-3"><label class="form-label">Is factor</label><input type="number" id="s_isf" class="form-control" value="1.2" step="0.05"></div>
-      <div class="col-md-3"><label class="form-label">t_target [s] a 50% línea</label><input type="number" id="s_t" class="form-control" value="0.4" step="0.05"></div>
-      <div class="col-md-6"><label class="form-label">Tag (EQUIP_GRP|EQUIPMENT|ID)</label><input class="form-control" id="s_tag" placeholder="L13|ALIM_5|12345"></div>
-      <div class="col-md-2"><label class="form-label">scale</label><input class="form-control" id="s_scale" value="0.001"></div>
-      <div class="col-md-4"><label class="form-label">Curva</label>
-        <select id="s_curve" class="form-select">
-          <option value="standard">Standard Inverse</option>
-          <option value="very">Very Inverse</option>
-          <option value="extremely">Extremely Inverse</option>
-          <option value="long">Long Time</option>
-        </select>
+      <div class="col-md-3"><label class="form-label">t_target [s]</label><input type="number" id="s_t" class="form-control" value="0.4" step="0.05"></div>
+      <!-- TAG combos -->
+      <div class="col-12"><label class="form-label">TAG (promedios de carga)</label>
+        <div class="select-row">
+          <div><small class="text-muted d-block">Grupo</small><select id="tg_grp" class="form-select form-select-sm"></select></div>
+          <div><small class="text-muted d-block">Equipo</small><select id="tg_eq" class="form-select form-select-sm"></select></div>
+          <div><small class="text-muted d-block">ID</small><select id="tg_id" class="form-select form-select-sm"></select></div>
+          <div style="width:100px"><small class="text-muted d-block">scale</small><input id="s_scale" class="form-control form-control-sm" value="0.001"></div>
+          <div><button class="btn btn-sm btn-outline-secondary" id="btn-probar" type="button">Probar</button> <span class="badge-probe" id="probe_out"></span></div>
+        </div>
       </div>
-      <div class="col-md-6"><label class="form-label">KML (ruta servidor)</label><input class="form-control" id="s_kml" placeholder="static/geodata/L13.kml"></div>
-      <div class="col-md-6"><label class="form-label">Nombre línea en KML</label><input class="form-control" id="s_linename" placeholder="ALIM_5"></div>
+      <div class="col-md-6"><label class="form-label">SHP (ruta .shp)</label><input class="form-control" id="s_shp" placeholder="static/geodata/red_13kv.shp"></div>
+      <div class="col-md-3"><label class="form-label">Campo</label><input class="form-control" id="s_attr" placeholder="NOMBRE"></div>
+      <div class="col-md-3"><label class="form-label">Valor</label><input class="form-control" id="s_attr_val" placeholder="ALIM_5"></div>
+      <div class="col-md-6"><label class="form-label">KML (fallback)</label><input class="form-control" id="s_kml" placeholder="static/geodata/L13.kml"></div>
+      <div class="col-md-6"><label class="form-label">Nombre línea (fallback)</label><input class="form-control" id="s_linename" placeholder="ALIM_5"></div>
+      <div class="col-12 d-flex justify-content-end"><button class="btn btn-primary" id="do-sugerir" type="button">Calcular sugerencia</button></div>
     </div>
-    <div class="d-flex gap-2 mt-3">
-      <button class="btn btn-primary" id="do-sugerir">Calcular</button>
-    </div>
-    <pre id="s_out" class="small mt-2"></pre>
   </div>
 </div>
 {% endblock %}
 {% block extra_scripts %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script>window.Chart || document.write('<script src="{{ url_for("static", filename="js/vendor/chart.umd.min.js") }}"><\\/script>')</script>
+<script>window.Chart || document.write('<script src="{{ url_for('static', filename='js/vendor/chart.umd.min.js') }}"><\/script>')</script>
 <script>
 (function(){
   if(!window.Chart){ alert("No se pudo cargar Chart.js"); return; }
@@ -92,7 +97,7 @@
     const ys = xs.map(m => {
       const I = m*Is;
       const body = { I_fault: I, Is: Is, TMS: TMS, curve: curve };
-      return fetch("{{ url_for('protections.idmt_calc') }}", { method:"POST", headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) })
+      return fetch("{{ url_for('protections.idmt_calc') }}", { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) })
              .then(r=>r.json()).then(d=>d.t_trip_s);
     });
     return {xs, ys: await Promise.all(ys)};
@@ -107,29 +112,78 @@
     chart.data.datasets[0].data = s1.ys;
     chart.update();
   }
-  document.getElementById('btn-calcular').onclick = draw;
 
-  // --- Sugerencias desde SQL + KML ---
+  document.getElementById('btn-calcular').onclick = draw;
+  draw();
+
+  // --- Combos TAG para sugerencias ---
+  async function fetchJSON(url){ const r = await fetch(url); return r.json(); }
+  async function getGroups(){ return (await fetchJSON("{{ url_for('power.tag_groups') }}")).groups || []; }
+  async function getEquipment(grp){ return (await fetchJSON(`{{ url_for('power.tag_equipment') }}?grp=${encodeURIComponent(grp)}`)).equipment || []; }
+  async function getIds(grp, eq){ return (await fetchJSON(`{{ url_for('power.tag_ids') }}?grp=${encodeURIComponent(grp)}&equipment=${encodeURIComponent(eq)}`)).ids || []; }
+  async function probeTag(grp, eq, id, scale){
+    const r = await fetch("{{ url_for('power.probe_tag') }}", {
+      method:"POST", headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({equip_grp:grp, equipment:eq, signal_id:id, scale:scale||1})
+    });
+    return r.json();
+  }
+  async function fillCombos(){
+    const grpSel = document.getElementById('tg_grp');
+    const eqSel  = document.getElementById('tg_eq');
+    const idSel  = document.getElementById('tg_id');
+    const groups = await getGroups();
+    grpSel.innerHTML = groups.map(g=>`<option>${g}</option>`).join('');
+    async function updateEq(){
+      const eqs = await getEquipment(grpSel.value);
+      eqSel.innerHTML = eqs.map(e=>`<option>${e}</option>`).join('');
+      updateId();
+    }
+    async function updateId(){
+      const ids = await getIds(grpSel.value, eqSel.value);
+      idSel.innerHTML = ids.map(id=>`<option>${id}</option>`).join('');
+    }
+    grpSel.onchange = updateEq; eqSel.onchange = updateId;
+    await updateEq();
+  }
+  fillCombos();
+
+  // --- Modal open/close
   const modal = document.getElementById('modal-sug');
   document.getElementById('btn-sugerir').onclick = ()=>{ modal.style.display='flex'; };
   document.getElementById('close-sug').onclick = ()=>{ modal.style.display='none'; };
 
+  // --- Probar TAG
+  document.getElementById('btn-probar').onclick = async ()=>{
+    const grp = document.getElementById('tg_grp').value;
+    const eq  = document.getElementById('tg_eq').value;
+    const id  = document.getElementById('tg_id').value;
+    const sc  = parseFloat(document.getElementById('s_scale').value||'1');
+    const r = await probeTag(grp, eq, (/^\d+$/.test(id)? parseInt(id) : id), sc);
+    document.getElementById('probe_out').textContent = r.ok ? r.value.toFixed(3) : 'sin datos';
+  };
+
+  // --- Calcular sugerencia
   document.getElementById('do-sugerir').onclick = async ()=>{
-    const tag = document.getElementById('s_tag').value.trim();
-    const parts = tag.split('|');
-    if(parts.length!==3){ alert('Tag inválido'); return; }
+    const grp = document.getElementById('tg_grp').value;
+    const eq  = document.getElementById('tg_eq').value;
+    const id  = document.getElementById('tg_id').value;
+    const sc  = parseFloat(document.getElementById('s_scale').value||'1');
+
     const body = {
       V_kV: num(document.getElementById('s_V').value),
       pf: num(document.getElementById('s_pf').value),
       is_factor: num(document.getElementById('s_isf').value),
-      curve: document.getElementById('s_curve').value,
+      curve: document.getElementById('curve').value,
       t_target: num(document.getElementById('s_t').value),
-      tag: { equip_grp: parts[0], equipment: parts[1], signal_id: parseInt(parts[2]), scale: num(document.getElementById('s_scale').value) },
-      line: { kml_file: document.getElementById('s_kml').value.trim(), name: document.getElementById('s_linename').value.trim() }
+      tag: { equip_grp: grp, equipment: eq, signal_id: (/^\d+$/.test(id)? parseInt(id) : id), scale: sc },
+      shape: { path: document.getElementById('s_shp').value, attr: document.getElementById('s_attr').value, value: document.getElementById('s_attr_val').value },
+      line: { kml_file: document.getElementById('s_kml').value, name: document.getElementById('s_linename').value, r_ohm_km: 0.3, x_ohm_km: 0.9 },
+      Zs: { r: 0.2, x: 0.8 },
+      fraction: 0.5
     };
-    const r = await fetch("{{ url_for('protections.sugerencias') }}", { method:"POST", headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    const r = await fetch("{{ url_for('protections.sugerencias') }}", { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
     const data = await r.json();
-    document.getElementById('s_out').textContent = JSON.stringify(data, null, 2);
     if(data.ok){
       const s2 = await serie(data.Is_A, data.TMS, document.getElementById('curve').value);
       chart.data.labels = s2.xs;
@@ -140,6 +194,9 @@
         document.getElementById('TMS').value = data.TMS.toFixed(2).replace('.',',');
         draw();
       }
+      modal.style.display='none';
+    }else{
+      alert('No se pudo calcular la sugerencia');
     }
   };
 })();

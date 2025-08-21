@@ -62,3 +62,46 @@ def shp_line_length_km(shp_path: str, attr_name: str, attr_value):
     if L_total == 0.0:
         raise ValueError(f"No hallé geometría con {attr_name}={attr_value} en {shp_path}")
     return L_total
+
+def zip_shp_line_length_km(zip_path, attr_name, attr_value):
+    import zipfile, io, os
+    try:
+        import shapefile
+    except Exception as e:
+        raise RuntimeError("Instala 'pyshp'") from e
+
+    if not os.path.isabs(zip_path):
+        zip_path = os.path.join(os.getcwd(), zip_path.lstrip("/"))
+
+    with zipfile.ZipFile(zip_path, "r") as z:
+        shp = next((n for n in z.namelist() if n.lower().endswith(".shp")), None)
+        shx = next((n for n in z.namelist() if n.lower().endswith(".shx")), None)
+        dbf = next((n for n in z.namelist() if n.lower().endswith(".dbf")), None)
+        if not (shp and shx and dbf):
+            raise ValueError("ZIP sin .shp/.shx/.dbf")
+
+        r = shapefile.Reader(
+            shp=io.BytesIO(z.read(shp)),
+            shx=io.BytesIO(z.read(shx)),
+            dbf=io.BytesIO(z.read(dbf)),
+        )
+
+    fields = [f[0] for f in r.fields[1:]]
+    if attr_name not in fields:
+        raise ValueError("Campo {} no encontrado".format(attr_name))
+    idx = fields.index(attr_name)
+
+    L = 0.0
+    for sr in r.iterShapeRecords():
+        if sr.record[idx] == attr_value:
+            pts = sr.shape.points
+            parts = list(sr.shape.parts) + [len(pts)]
+            for i in range(len(parts)-1):
+                seg = pts[parts[i]:parts[i+1]]
+                for (lon1, lat1), (lon2, lat2) in zip(seg, seg[1:]):
+                    L += _haversine_km(lat1, lon1, lat2, lon2)
+    if L == 0.0:
+        raise ValueError("No encontré geometría con {}={}".format(attr_name, attr_value))
+    return L
+
+

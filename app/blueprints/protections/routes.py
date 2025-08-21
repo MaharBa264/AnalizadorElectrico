@@ -1,8 +1,11 @@
 # app/blueprints/protections/routes.py (step 3)
-from flask import Blueprint, render_template, request, jsonify
 import math
+from flask import Blueprint, render_template, request, jsonify, current_app
 from app.services.sql import query_list as sql_query
-from app.services.geo_len import kml_line_length_km, shp_line_length_km
+from datetime import datetime, timedelta
+from app.services.geo_len import kml_line_length_km, shp_line_length_km, zip_shp_line_length_km
+from app.blueprints.analizador.services import fetch_sql_series
+from app.services.signal_adapter import series
 
 bp = Blueprint("protections", __name__, template_folder="../../templates/protections")
 
@@ -26,23 +29,16 @@ def percentile(xs, q=0.95):
     return xs[min(max(i,0), len(xs)-1)]
 
 def last_values_series(equip_grp, equipment, signal_id, hours=168):
-    sql = f"""
-    SELECT Time, VALUE
-    FROM ANALOG_NUEVA
-    WHERE EQUIP_GRP = ? AND EQUIPMENT = ? AND ID = ?
-      AND BAD = 0 AND OLD = 0
-      AND Time >= DATEADD(hour, -{hours}, GETDATE())
-    ORDER BY Time ASC
-    """
-    rows = sql_query(sql, [equip_grp, equipment, signal_id]) or []
-    vals = []
-    for r in rows:
-        v = r.get("VALUE") or r.get("value")
-        try:
-            vals.append(float(v))
-        except:
-            pass
+    end_dt = datetime.now()
+    start_dt = end_dt - timedelta(hours=hours)
+    df = fetch_sql_series(equip_grp, equipment, signal_id, start_dt, end_dt)
+    if df.empty:
+        return []
+    ok = (df.get("OLD", 0) == 0) & (df.get("BAD", 0) == 0)
+    vals = df.loc[ok, "VALUE"].dropna().astype(float).tolist()
     return vals
+
+
 
 @bp.route("/protecciones/idmt", methods=["GET"])
 def idmt_index():
@@ -89,7 +85,16 @@ def sugerencias():
             L = shp_line_length_km(shape["path"], shape["attr"], shape["value"])
         except Exception:
             L = None
-
+    # NUEVO: zip shapefile (igual que el mapa)
+    if L is None and shape.get("zip_path") and shape.get("attr") and (shape.get("value") is not None):
+        try:
+            zip_path = shape["zip_path"]
+            if zip_path.startswith("/static/"):
+                zip_path = os.path.join(current_app.root_path, zip_path.lstrip("/"))
+            L = zip_shp_line_length_km(zip_path, shape["attr"], shape["value"])
+        except Exception:
+            L = None
+            
     if L is None:
         line = d.get("line") or {}
         if line.get("length_km") is not None:
@@ -110,4 +115,42 @@ def sugerencias():
 
     return jsonify({"ok": True, "Is_A": Is, "TMS": TMS, "I_f_A": I_f, "p95_power": p95})
 
-    
+
+prot_bp = Blueprint("protections", __name__, template_folder="../../templates/protections")
+
+@bp.route("/protections/propose_5051", methods=["POST"])
+def propose_5051():
+    d = request.get_json(force=True)
+    cur = d.get("current_tag") or {}
+    days = int(d.get("days", 30))
+
+    end = datetime.now()
+    start = end - timedelta(days=days)
+    df_i = series(cur.get("equip_grp"), cur.get("equipment"), cur.get("signal_id"), start, end)
+    if df_i is None or df_i.empty:
+        return jsonify({"ok": False, "error": "Sin datos de corriente"}), 400
+
+    ok = (df_i.get("OLD", 0)==0) & (df_i.get("BAD",0)==0)
+    df_i = df_i.loc[ok]
+    Imax = float(df_i["VALUE"].max())
+    Imean = float(df_i["VALUE"].mean())
+
+    I51_pickup = round(1.25 * max(Imean, 0.8*Imax), 2)
+    I50_pickup = round(6.0 * I51_pickup, 1)
+
+    L = None
+    shape = d.get("shape") or {}
+    if shape.get("zip_path") and shape.get("attr") and (shape.get("value") is not None):
+        try: L = zip_shp_line_length_km(shape["zip_path"], shape["attr"], shape["value"])
+        except Exception: L = None
+    elif d.get("length_km") is not None:
+        L = float(d["length_km"])
+
+    return jsonify({
+        "ok": True,
+        "inputs": {"Imax": Imax, "Imean": Imean, "length_km": L},
+        "suggestions": {
+            "51P": {"pickup_A": I51_pickup, "curve": "IEC SI", "tms": 0.2},
+            "50P": {"pickup_A": I50_pickup}
+        }
+    })
