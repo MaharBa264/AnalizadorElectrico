@@ -211,15 +211,20 @@ def wizard5051():
 
 @prot_bp.route("/protections/zip_line_ids")
 def zip_line_ids():
-    from app.services.geo_len import zip_shp_unique_values
+    from app.services.geo_len import zip_shp_suggest
     zip_path = _resolve_zip_path(request.args.get("zip_path"))
-    attr_in = (request.args.get("attr") or "").strip() or None
+    attr_in  = (request.args.get("attr") or "").strip() or None
+    q        = (request.args.get("q") or "").strip()
     try:
-        ids, used_attr = zip_shp_unique_values(zip_path, attr_in)
-        return jsonify({"ok": True, "ids": ids, "attr": used_attr})
+        limit = int(request.args.get("limit", 50))
+    except Exception:
+        limit = 50
+    try:
+        sug = zip_shp_suggest(zip_path, attr_in, q, limit)
+        return jsonify({"ok": True, **sug})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
-
+    
 @prot_bp.route("/protections/zip_line_profile", methods=["POST"])
 def zip_line_profile():
     from app.services.geo_len import zip_shp_line_profile
@@ -249,3 +254,23 @@ def _resolve_zip_path(p):
     if not os.path.exists(ap):
         ap = DEFAULT_GEODATA_ZIP
     return ap
+
+@prot_bp.route("/protections/feeder_profile", methods=["POST"])
+def feeder_profile():
+    """
+    Perfil de línea por GRUPO/EQUIPO (como el mapa). Body:
+    { zip_path?, group, equipment, group_attr?, feeder_attr?, material_attr? }
+    """
+    from app.services.geo_len import zip_shp_feeder_profile
+    d = request.get_json(force=True)
+    zip_path = _resolve_zip_path(d.get("zip_path"))
+    group = d.get("group") or d.get("grp") or ""
+    feeder = d.get("equipment") or d.get("feeder") or d.get("id") or ""
+    mat_attr = (d.get("material_attr") or "MATERIAL").strip() if d.get("material_attr") else None
+    try:
+        prof = zip_shp_feeder_profile(zip_path, group, feeder,
+                                      d.get("group_attr"), d.get("feeder_attr"),
+                                      mat_attr)
+        return jsonify({"ok": True, **prof})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500

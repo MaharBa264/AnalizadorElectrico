@@ -77,16 +77,18 @@
     <div class="mt-2">
       <div class="small text-muted mb-1">Detectar línea desde SHP.zip (igual que el mapa):</div>
       <div class="row-g">
-        <input id="zip_path" class="form-control form-control-sm"
-                value="{{ default_zip }}" readonly>
-        <input id="zip_attr" class="form-control form-control-sm" placeholder="campo ID (ej: LINEA_ID)" value="LINEA_ID" readonly>
+        <input id="zip_path" class="form-control form-control-sm" value="{{ default_zip }}" readonly>
+        <input id="zip_attr" class="form-control form-control-sm" value="LINEA_ID">
       </div>
+
       <div class="d-flex align-items-end gap-2 mt-2">
-        <button id="btn-load-ids" class="btn btn-outline-secondary btn-sm">Cargar IDs</button>
-        <select id="zip_id" class="form-select form-select-sm" style="max-width:420px"></select>
+        <input id="zip_query" class="form-control form-control-sm" placeholder="Buscar ID (ej: AU11)" style="max-width:220px">
+        <button id="btn-search" class="btn btn-outline-secondary btn-sm">Buscar</button>
+        <select id="zip_id" class="form-select form-select-sm" size="6" style="max-width:420px"></select>
         <input id="zip_mat_attr" class="form-control form-control-sm" placeholder="campo MATERIAL (opcional)" value="MATERIAL" style="max-width:220px">
         <button id="btn-profile" class="btn btn-outline-secondary btn-sm">Calcular perfil</button>
       </div>
+      <div class="small-mono mt-1" id="ids-info"></div>
       <div class="small-mono mt-2" id="measure-out"></div>
       <div class="mt-2" id="mat-table"></div>
     </div>
@@ -172,57 +174,84 @@ document.getElementById('btn-probe').onclick = async ()=>{
   }catch(e){ document.getElementById('probe-out').textContent = 'sin datos'; }
 };
 
-/* ==== ZIP: cargar IDs y perfil (longitud + materiales) ==== */
+/* ==== ZIP: búsqueda con límite + perfil ==== */
 const api2 = {
-  lineIds: (zip_path, attr) => fetch(`{{ url_for('protections.zip_line_ids') }}?zip_path=${encodeURIComponent(zip_path)}&attr=${encodeURIComponent(attr||'LINEA_ID')}`).then(r=>r.json()),
+  lineSuggest: (zip_path, attr, q, limit=50) =>
+    fetch(`{{ url_for('protections.zip_line_ids') }}?zip_path=${encodeURIComponent(zip_path)}&attr=${encodeURIComponent(attr||'')}&q=${encodeURIComponent(q||'')}&limit=${limit}`)
+      .then(r=>r.json()),
   lineProfile: (body)=> postJSON("{{ url_for('protections.zip_line_profile') }}", body),
+  feederProfile: (body)=> postJSON("{{ url_for('protections.feeder_profile') }}", body),
 };
 
-document.getElementById('btn-load-ids').onclick = async ()=>{
+const idsInfo = document.getElementById('ids-info');
+const selIds  = document.getElementById('zip_id');
+const inQuery = document.getElementById('zip_query');
+
+async function loadIds(qText){
   const zip_path = document.getElementById('zip_path').value.trim();
-  const zip_attr = (document.getElementById('zip_attr').value||'LINEA_ID').trim();
-  const out = document.getElementById('measure-out');
-  const sel = document.getElementById('zip_id');
-  const tableBox = document.getElementById('mat-table');
-  tableBox.innerHTML = ''; sel.innerHTML = '';
-  if(!zip_path){ out.textContent = 'Falta zip_path'; return; }
-  out.textContent = 'Cargando IDs...';
-  try{
-    const j = await api2.lineIds(zip_path, zip_attr);
-    if(!j.ok){ out.textContent = j.error||'Error'; return; }
-    const ids = j.ids||[];
-    if(ids.length===0){ out.textContent = 'ZIP sin IDs'; return; }
-    sel.innerHTML = ids.map(v=>`<option>${v}</option>`).join('');
-    out.textContent = `Se cargaron ${ids.length} IDs`;
-  }catch(e){ out.textContent = 'Error al leer ZIP'; }
-};
+  const zip_attr = (document.getElementById('zip_attr').value || '').trim(); // puede ir vacío
+  selIds.innerHTML = '';
+  idsInfo.textContent = 'Buscando...';
+  const j = await api2.lineSuggest(zip_path, zip_attr, qText, 50);
+  if(!j.ok){ idsInfo.textContent = j.error || 'Error'; return; }
+  // Mostrar el campo realmente usado (autodetectado en backend si hace falta)
+  document.getElementById('zip_attr').value = j.attr || document.getElementById('zip_attr').value;
 
-(async ()=>{
-  const btnLoad = document.getElementById('btn-load-ids');
-  // si ya hay un zip_path (viene del backend), cargamos los IDs automáticamente
-  if (document.getElementById('zip_path').value.trim()) {
-    btnLoad.click();
-  }
+  selIds.innerHTML = (j.items||[]).map(v=>`<option value="${v}">${v}</option>`).join('');
+  idsInfo.textContent = `Campo: ${j.attr} · ${j.items?.length||0} resultados${j.truncated ? ' (primeros 50)' : ''}`;
+
+  // Si hay 1 resultado, lo dejamos seleccionado
+  if((j.items||[]).length === 1){ selIds.selectedIndex = 0; }
+}
+
+// Botón Buscar
+document.getElementById('btn-search').onclick = ()=> loadIds(inQuery.value);
+
+// Typeahead con debounce
+let tmr = null;
+inQuery.addEventListener('input', ()=>{
+  clearTimeout(tmr);
+  tmr = setTimeout(()=> loadIds(inQuery.value), 300);
+});
+
+// Al abrir, buscar por el valor del Equipo (p.ej. AU11)
+(function autoSearchByEquipo(){
+  const eqVal = (document.getElementById('i_eq').value || '').toString();
+  if(eqVal){ inQuery.value = eqVal; loadIds(eqVal); }
 })();
+
 
 
 
 document.getElementById('btn-profile').onclick = async ()=>{
   const zip_path = document.getElementById('zip_path').value.trim();
-  const attr     = (document.getElementById('zip_attr').value||'LINEA_ID').trim();
-  const value    = document.getElementById('zip_id').value;         // 🔧 antes buscabas zip_value
-  const mat_attr = (document.getElementById('zip_mat_attr').value||'MATERIAL').trim();
+  const attr     = (document.getElementById('zip_attr').value || '').trim();
+  const value    = document.getElementById('zip_id').value;   // puede venir vacío
+  const mat_attr = (document.getElementById('zip_mat_attr').value || '').trim();
   const out  = document.getElementById('measure-out');
   const tableBox = document.getElementById('mat-table');
   tableBox.innerHTML = '';
-  if(!zip_path || !value){ out.textContent = 'Indicá ZIP y elegí una línea'; return; }
+
   out.textContent = 'Calculando perfil...';
+
   try{
-    const prof = await api2.lineProfile({ zip_path, attr, value, material_attr: mat_attr || null });
-    if(!prof.ok){ out.textContent = prof.error||'Error'; return; }
+    let prof;
+    if (value) {
+      // Perfil por ID único
+      prof = await api2.lineProfile({ zip_path, attr, value, material_attr: mat_attr || null });
+    } else {
+      // 🔧 Fallback: perfil por GRUPO/EQUIPO (igual que el mapa)
+      const group = document.getElementById('i_grp').value;
+      const equipment = document.getElementById('i_eq').value;
+      prof = await api2.feederProfile({ zip_path, group, equipment, material_attr: mat_attr || null });
+    }
+    if(!prof.ok){ out.textContent = prof.error || 'Error'; return; }
+
     const L = prof.length_km || 0;
     document.getElementById('L_km').value = L.toFixed(3);
-    out.textContent = `Línea "${value}": L=${L.toFixed(3)} km`;
+    const used = prof.used_fields ? ` · campos usados: ${prof.used_fields.group} / ${prof.used_fields.feeder}` : '';
+    const segs = prof.segments!=null ? ` · tramos: ${prof.segments}` : '';
+    out.textContent = `L=${L.toFixed(3)} km${used}${segs}`;
 
     if((prof.materials||[]).length){
       const rows = prof.materials.map(m=>`
@@ -230,10 +259,7 @@ document.getElementById('btn-profile').onclick = async ()=>{
       `).join('');
       tableBox.innerHTML = `
         <div class="card mt-2 p-2">
-          <div class="d-flex justify-content-between align-items-center">
-            <strong>Composición de materiales</strong>
-            <small class="text-muted">del ZIP · ${attr}=${value}</small>
-          </div>
+          <strong>Composición de materiales</strong>
           <div class="table-responsive mt-2">
             <table class="table table-sm mb-0">
               <thead><tr><th>Material</th><th class="text-end">Longitud (km)</th><th class="text-end">%</th></tr></thead>
@@ -242,7 +268,9 @@ document.getElementById('btn-profile').onclick = async ()=>{
           </div>
         </div>`;
     }
-  }catch(e){ out.textContent = 'No se pudo calcular perfil'; }
+  }catch(e){
+    out.textContent = 'No se pudo calcular perfil';
+  }
 };
 
 /* ==== Calcular ajustes ==== */

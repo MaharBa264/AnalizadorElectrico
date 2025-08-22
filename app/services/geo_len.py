@@ -348,3 +348,144 @@ def zip_shp_line_profile(zip_path: str, group_attr: str, group_value, material_a
         materials.sort(key=lambda x: x["length_km"], reverse=True)
 
     return {"length_km": L_total, "materials": materials, "used_attr": group_attr}
+
+
+# Sugerencias de IDs (filtrando por texto y con límite)
+def zip_shp_suggest(zip_path: str, attr_name: str = None, q: str = "", limit: int = 50):
+    r, _ = _zip_open_reader(zip_path)
+    fields = [f[0] for f in r.fields[1:]]
+    if not attr_name or attr_name not in fields:
+        attr_name = _choose_id_field(fields)
+    idx = fields.index(attr_name)
+
+    def _norm(s: str) -> str:
+        import unicodedata
+        s = "".join(c for c in unicodedata.normalize("NFKD", s) if not unicodedata.combining(c))
+        return s.lower()
+
+    qn = _norm(q or "")
+    seen, items = set(), []
+    truncated = False
+
+    for sr in r.iterShapeRecords():
+        v = sr.record[idx]
+        if v is None:
+            continue
+        s = str(v)
+        if qn and qn not in _norm(s):
+            continue
+        if s in seen:
+            continue
+        seen.add(s)
+        items.append(s)
+        if len(items) >= max(1, int(limit)):
+            truncated = True
+            break
+
+    return {"items": items, "attr": attr_name, "truncated": truncated}
+
+
+def _norm_txt(s):
+    if s is None: return ""
+    s = str(s)
+    s = "".join(c for c in unicodedata.normalize("NFKD", s) if not unicodedata.combining(c))
+    return s.strip().upper()
+
+def _choose_group_field(fields):
+    cand = ["RED","GRUPO","SISTEMA","ZONA","SUBRED"]
+    upp = {f.upper(): f for f in fields}
+    for c in cand:
+        if c in upp: return upp[c]
+    return fields[0]
+
+def _choose_feeder_field(fields):
+    cand = ["ALIMENTADO","ALIMENTADOR","ETIQUETA","FEEDER","CIRCUITO","LINEA","ID","NOMBRE"]
+    upp = {f.upper(): f for f in fields}
+    for c in cand:
+        if c in upp: return upp[c]
+    return fields[0]
+
+def zip_shp_feeder_profile(zip_path: str, group_value: str, feeder_value: str,
+                           group_attr: str = None, feeder_attr: str = None,
+                           material_attr: str = None):
+    """
+    Suma TODAS las geometrías cuyo (group_attr == group_value) y
+    (feeder_attr == feeder_value)   [comparación normalizada, case/acentos-insensible].
+    Devuelve longitud total y % por material si existe.
+    """
+    r, _ = _zip_open_reader(zip_path)
+    fields = [f[0] for f in r.fields[1:]]
+    group_attr  = group_attr  if group_attr  in fields else _choose_group_field(fields)
+    feeder_attr = feeder_attr if feeder_attr in fields else _choose_feeder_field(fields)
+    idx_g = fields.index(group_attr)
+    idx_f = fields.index(feeder_attr)
+    idx_m = fields.index(material_attr) if (material_attr and material_attr in fields) else None
+
+    G = _norm_txt(group_value)
+    F = _norm_txt(feeder_value)
+
+    from math import radians, sin, cos, sqrt, atan2
+    def hav(lat1, lon1, lat2, lon2):
+        R = 6371.0
+        dlat = radians(lat2 - lat1); dlon = radians(lon2 - lon1)
+        a = sin(dlat/2)**2 + cos(radians(lat1))*cos(radians(lat2))*sin(dlon/2)**2
+        return R * 2 * atan2(sqrt(a), sqrt(1-a))
+
+    L_total = 0.0
+    comp = {}
+    segs = 0
+
+    for sr in r.iterShapeRecords():
+        g = _norm_txt(sr.record[idx_g])
+        f = _norm_txt(sr.record[idx_f])
+        # igualdad estricta; si no matchea nada, adelante lo relajamos a 'contains' en el endpoint
+        if g != G or f != F:
+            continue
+        pts = sr.shape.points
+        if not pts:
+            continue
+        parts = list(sr.shape.parts) + [len(pts)]
+        seg_len = 0.0
+        for i in range(len(parts)-1):
+            seg = pts[parts[i]:parts[i+1]]
+            for (lon1,lat1),(lon2,lat2) in zip(seg, seg[1:]):
+                seg_len += hav(lat1,lon1,lat2,lon2)
+        L_total += seg_len
+        segs += 1
+        if idx_m is not None:
+            m = _norm_txt(sr.record[idx_m]) or "SIN_MATERIAL"
+            comp[m] = comp.get(m, 0.0) + seg_len
+
+    # Si no encontramos nada por igualdad, reintentamos con 'contains'
+    if L_total == 0.0:
+        for sr in r.iterShapeRecords():
+            g = _norm_txt(sr.record[idx_g])
+            f = _norm_txt(sr.record[idx_f])
+            if (G and G not in g) or (F and F not in f):
+                continue
+            pts = sr.shape.points
+            if not pts: continue
+            parts = list(sr.shape.parts) + [len(pts)]
+            seg_len = 0.0
+            for i in range(len(parts)-1):
+                seg = pts[parts[i]:parts[i+1]]
+                for (lon1,lat1),(lon2,lat2) in zip(seg, seg[1:]):
+                    seg_len += hav(lat1,lon1,lat2,lon2)
+            L_total += seg_len
+            segs += 1
+            if idx_m is not None:
+                m = _norm_txt(sr.record[idx_m]) or "SIN_MATERIAL"
+                comp[m] = comp.get(m, 0.0) + seg_len
+
+    materials = []
+    if comp and L_total > 0:
+        for m, lk in comp.items():
+            materials.append({"material": m, "length_km": lk, "percent": (lk/L_total)*100.0})
+        materials.sort(key=lambda x: x["length_km"], reverse=True)
+
+    return {
+        "length_km": L_total,
+        "materials": materials,
+        "used_fields": {"group": group_attr, "feeder": feeder_attr},
+        "segments": segs
+    }
